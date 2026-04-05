@@ -145,7 +145,7 @@ export default function ViolatorDetailPage() {
       inputType,
       value,
       options,
-      isAdditional: !!violator?.дополнительныеПоля?.[fieldId],
+      isAdditional: !!storeField || violator?.дополнительныеПоля?.[fieldId] !== undefined,
       prefix: fieldDef?.prefix,
       postfix: fieldDef?.postfix,
     });

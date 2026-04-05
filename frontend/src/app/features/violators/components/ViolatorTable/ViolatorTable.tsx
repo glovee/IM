@@ -1,10 +1,11 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Settings2 } from 'lucide-react';
 import { Violator, ViolatorDynamicColumnKey } from '../../../../types/violator.ts';
 import ResizableDraggableColumnHeader from './ResizableDraggableColumnHeader.tsx';
 import ViolatorRow from './ViolatorRow.tsx';
 import ColumnFilter from './ColumnFilter.tsx';
 import { useAppSettings } from '../../../../store/settings.ts';
+import { useTableSettingsStore } from '../../../../store/tableSettingsStore.ts';
 import {
   DEFAULT_VIOLATOR_COLUMNS,
   getExtraColumnDefinitions,
@@ -27,17 +28,42 @@ interface ViolatorTableProps {
 const itemsPerPageOptions = [10, 20, 50, 100];
 
 export default function ViolatorTable({ violators }: ViolatorTableProps) {
-  const [columns, setColumns] = useState<ViolatorColumnDefinition[]>(DEFAULT_VIOLATOR_COLUMNS);
+  const setVisibleColumns = useTableSettingsStore((state) => state.setVisibleColumns);
+  const setColumnWidth = useTableSettingsStore((state) => state.setColumnWidth);
+  const getTableConfig = useTableSettingsStore((state) => state.getTableConfig);
+  const itemsPerPage = useAppSettings((state) => state.itemsPerPage);
+  const setItemsPerPage = useAppSettings((state) => state.setItemsPerPage);
+
   const [filters, setFilters] = useState<Map<ViolatorDynamicColumnKey, Set<string>>>(new Map());
   const [currentPage, setCurrentPage] = useState(1);
   const [customItemsPerPage, setCustomItemsPerPage] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const itemsPerPage = useAppSettings((state) => state.itemsPerPage);
-  const setItemsPerPage = useAppSettings((state) => state.setItemsPerPage);
   const [sortConfig, setSortConfig] = useState<{ columnKey: ViolatorDynamicColumnKey; direction: 'asc' | 'desc' } | null>(null);
 
   const typeSpecificColumns = getExtraColumnDefinitions();
+
+  // Формируем ключ для сохранения настроек
+  const settingsKey = 'violators';
+  const savedConfig = getTableConfig(settingsKey);
+
+  // Инициализация колонок из сохранённых настроек
+  const [columns, setColumns] = useState<ViolatorColumnDefinition[]>(() => {
+    if (savedConfig && savedConfig.visibleColumns.length > 0) {
+      const allAvailable = [...DEFAULT_VIOLATOR_COLUMNS, ...typeSpecificColumns];
+      return savedConfig.visibleColumns
+        .map((key) => {
+          const def = allAvailable.find((c) => c.key === key);
+          if (!def) return null;
+          return {
+            ...def,
+            width: savedConfig.columnWidths[key] ?? def.width,
+          };
+        })
+        .filter(Boolean) as ViolatorColumnDefinition[];
+    }
+    return DEFAULT_VIOLATOR_COLUMNS;
+  });
 
   useEffect(() => {
     setColumns((prevColumns) => {
@@ -83,7 +109,8 @@ export default function ViolatorTable({ violators }: ViolatorTableProps) {
             col.key === columnKey ? { ...col, width } : col
         )
     );
-  }, []);
+    setColumnWidth(settingsKey, columnKey, width);
+  }, [settingsKey, setColumnWidth]);
 
   const handleSort = useCallback((columnKey: ViolatorDynamicColumnKey, direction: 'asc' | 'desc' | null) => {
     if (direction === null) {
@@ -144,6 +171,7 @@ export default function ViolatorTable({ violators }: ViolatorTableProps) {
 
   const toggleDefaultColumn = useCallback((column: ViolatorColumnDefinition, checked: boolean) => {
     setColumns((prevColumns) => {
+      let nextColumns: ViolatorColumnDefinition[];
       if (checked) {
         if (prevColumns.some((item) => item.key === column.key)) {
           return prevColumns;
@@ -155,24 +183,30 @@ export default function ViolatorTable({ violators }: ViolatorTableProps) {
           .map((item) => item.key);
         const rebuiltDefaults = DEFAULT_VIOLATOR_COLUMNS.filter((item) => nextDefaultKeys.includes(item.key));
         const customColumns = prevColumns.filter((item) => !item.isDefault);
-        return [...rebuiltDefaults, ...customColumns];
+        nextColumns = [...rebuiltDefaults, ...customColumns];
+      } else {
+        nextColumns = prevColumns.filter((item) => item.key !== column.key);
       }
-
-      return prevColumns.filter((item) => item.key !== column.key);
+      setVisibleColumns(settingsKey, nextColumns.map((c) => c.key));
+      return nextColumns;
     });
-  }, []);
+  }, [settingsKey, setVisibleColumns]);
 
   const toggleTypeColumn = useCallback((column: ViolatorColumnDefinition, checked: boolean) => {
     setColumns((prevColumns) => {
+      let nextColumns: ViolatorColumnDefinition[];
       if (checked) {
         if (prevColumns.some((item) => item.key === column.key)) {
           return prevColumns;
         }
-        return [...prevColumns, column];
+        nextColumns = [...prevColumns, column];
+      } else {
+        nextColumns = prevColumns.filter((item) => item.key !== column.key);
       }
-      return prevColumns.filter((item) => item.key !== column.key);
+      setVisibleColumns(settingsKey, nextColumns.map((c) => c.key));
+      return nextColumns;
     });
-  }, []);
+  }, [settingsKey, setVisibleColumns]);
 
   const totalPages = Math.ceil(sortedViolators.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;

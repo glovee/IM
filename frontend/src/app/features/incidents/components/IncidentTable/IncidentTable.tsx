@@ -1,10 +1,11 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Settings2 } from 'lucide-react';
 import { DynamicColumnKey, Incident, IncidentTypeId } from '../../../../types/incident.ts';
 import ResizableDraggableColumnHeader from './ResizableDraggableColumnHeader.tsx';
 import IncidentRow from './IncidentRow.tsx';
 import ColumnFilter from './ColumnFilter.tsx';
 import { useAppSettings } from '../../../../store/settings.ts';
+import { useTableSettingsStore } from '../../../../store/tableSettingsStore.ts';
 import { useIncidentTypesStore } from '../../../../store/incidentTypesStore.ts';
 import {
   DEFAULT_INCIDENT_COLUMNS,
@@ -30,15 +31,18 @@ const itemsPerPageOptions = [10, 20, 50, 100];
 
 export default function IncidentTable({ incidents }: IncidentTableProps) {
   const types = useIncidentTypesStore((state) => state.getTypes());
-  const [columns, setColumns] = useState<IncidentColumnDefinition[]>(DEFAULT_INCIDENT_COLUMNS);
+  const setVisibleColumns = useTableSettingsStore((state) => state.setVisibleColumns);
+  const setColumnWidth = useTableSettingsStore((state) => state.setColumnWidth);
+  const getTableConfig = useTableSettingsStore((state) => state.getTableConfig);
+  const itemsPerPage = useAppSettings((state) => state.itemsPerPage);
+  const setItemsPerPage = useAppSettings((state) => state.setItemsPerPage);
+
+  const [selectedIncidentType, setSelectedIncidentType] = useState<'all' | IncidentTypeId>('all');
   const [filters, setFilters] = useState<Map<DynamicColumnKey, Set<string>>>(new Map());
   const [currentPage, setCurrentPage] = useState(1);
   const [customItemsPerPage, setCustomItemsPerPage] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
-  const [selectedIncidentType, setSelectedIncidentType] = useState<'all' | IncidentTypeId>('all');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const itemsPerPage = useAppSettings((state) => state.itemsPerPage);
-  const setItemsPerPage = useAppSettings((state) => state.setItemsPerPage);
   const [sortConfig, setSortConfig] = useState<{ columnKey: DynamicColumnKey; direction: 'asc' | 'desc' } | null>(null);
 
   const selectedTypeDefinition = selectedIncidentType === 'all'
@@ -47,6 +51,29 @@ export default function IncidentTable({ incidents }: IncidentTableProps) {
   const typeSpecificColumns = selectedIncidentType === 'all'
     ? []
     : getExtraColumnDefinitions(selectedIncidentType);
+
+  // Формируем ключ для сохранения настроек
+  const settingsKey = `incidents:${selectedIncidentType}`;
+  const savedConfig = getTableConfig(settingsKey);
+  const isInitialized = useRef(false);
+
+  // Инициализация колонок из сохранённых настроек
+  const [columns, setColumns] = useState<IncidentColumnDefinition[]>(() => {
+    if (savedConfig && savedConfig.visibleColumns.length > 0) {
+      const allAvailable = [...DEFAULT_INCIDENT_COLUMNS, ...typeSpecificColumns];
+      return savedConfig.visibleColumns
+        .map((key) => {
+          const def = allAvailable.find((c) => c.key === key);
+          if (!def) return null;
+          return {
+            ...def,
+            width: savedConfig.columnWidths[key] ?? def.width,
+          };
+        })
+        .filter(Boolean) as IncidentColumnDefinition[];
+    }
+    return DEFAULT_INCIDENT_COLUMNS;
+  });
 
   useEffect(() => {
     setColumns((prevColumns) => {
@@ -106,7 +133,8 @@ export default function IncidentTable({ incidents }: IncidentTableProps) {
             col.key === columnKey ? { ...col, width } : col
         )
     );
-  }, []);
+    setColumnWidth(settingsKey, columnKey, width);
+  }, [settingsKey, setColumnWidth]);
 
   const handleSort = useCallback((columnKey: DynamicColumnKey, direction: 'asc' | 'desc' | null) => {
     if (direction === null) {
@@ -174,6 +202,7 @@ export default function IncidentTable({ incidents }: IncidentTableProps) {
 
   const toggleDefaultColumn = useCallback((column: IncidentColumnDefinition, checked: boolean) => {
     setColumns((prevColumns) => {
+      let nextColumns: IncidentColumnDefinition[];
       if (checked) {
         if (prevColumns.some((item) => item.key === column.key)) {
           return prevColumns;
@@ -185,24 +214,30 @@ export default function IncidentTable({ incidents }: IncidentTableProps) {
           .map((item) => item.key);
         const rebuiltDefaults = DEFAULT_INCIDENT_COLUMNS.filter((item) => nextDefaultKeys.includes(item.key));
         const customColumns = prevColumns.filter((item) => !item.isDefault);
-        return [...rebuiltDefaults, ...customColumns];
+        nextColumns = [...rebuiltDefaults, ...customColumns];
+      } else {
+        nextColumns = prevColumns.filter((item) => item.key !== column.key);
       }
-
-      return prevColumns.filter((item) => item.key !== column.key);
+      setVisibleColumns(settingsKey, nextColumns.map((c) => c.key));
+      return nextColumns;
     });
-  }, []);
+  }, [settingsKey, setVisibleColumns]);
 
   const toggleTypeColumn = useCallback((column: IncidentColumnDefinition, checked: boolean) => {
     setColumns((prevColumns) => {
+      let nextColumns: IncidentColumnDefinition[];
       if (checked) {
         if (prevColumns.some((item) => item.key === column.key)) {
           return prevColumns;
         }
-        return [...prevColumns, column];
+        nextColumns = [...prevColumns, column];
+      } else {
+        nextColumns = prevColumns.filter((item) => item.key !== column.key);
       }
-      return prevColumns.filter((item) => item.key !== column.key);
+      setVisibleColumns(settingsKey, nextColumns.map((c) => c.key));
+      return nextColumns;
     });
-  }, []);
+  }, [settingsKey, setVisibleColumns]);
 
   const totalPages = Math.ceil(sortedIncidents.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;

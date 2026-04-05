@@ -123,30 +123,11 @@ export function getIncidentColumnValueReact(incident: Incident, columnKey: Dynam
     const fieldId = columnKey.replace('custom:', '');
     const value = incident.дополнительныеПоля?.[fieldId];
     if (!value) return '—';
-    
-    // Проверяем, является ли поле типом file
+
     const fieldsStore = useIncidentFieldsStore.getState();
     const field = fieldsStore.getExtraFieldById(fieldId);
-    
-    if (field?.type === 'file') {
-      const files = value.split(',').map(s => s.trim()).filter(s => s);
-      if (files.length === 0) return '—';
-      return (
-        <div className="flex flex-wrap gap-1">
-          {files.map((file, idx) => (
-            <span
-              key={idx}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
-            >
-              {getFileIcon(file)}
-              {file}
-            </span>
-          ))}
-        </div>
-      );
-    }
-    
-    return value;
+
+    return renderIncidentFieldValue(field, value);
   }
 
   const value = incident[columnKey as BaseColumnKey];
@@ -167,7 +148,119 @@ export function getIncidentColumnValueReact(incident: Incident, columnKey: Dynam
     );
   }
 
+  // Базовые поля — ищем определение с маппингом русских ключей на store ID
+  const keyToStoreIdMap: Record<string, string> = {
+    'название': 'title',
+    'ответственный': 'assignee',
+    'источник': 'source',
+    'хост': 'host',
+    'login': 'login',
+    'статус': 'status',
+    'команда': 'team',
+    'дата': 'date',
+  };
+
+  const fieldsStore = useIncidentFieldsStore.getState();
+  const storeId = keyToStoreIdMap[columnKey] || columnKey;
+  const baseField = fieldsStore.baseFields.find((f) => f.id === storeId);
+
+  if (baseField && value) {
+    return renderIncidentFieldValue(baseField, String(value));
+  }
+
   return String(value ?? '—');
+}
+
+/**
+ * Рендерит значение дополнительного поля инцидента с учётом его типа
+ */
+function renderIncidentFieldValue(
+  field: { type?: string; selectOptions?: { label: string; borderColor: string; textColor: string; bgColor: string }[]; prefix?: string; postfix?: string; allowMultiple?: boolean } | undefined,
+  value: string
+): React.ReactNode {
+  // Select/multiselect — цветные бейджи
+  if (field?.type === 'select') {
+    const values = value.split(',').map((v) => v.trim()).filter((v) => v);
+    if (values.length === 0) return '—';
+    return (
+      <div className="flex flex-wrap gap-1">
+        {values.map((val, idx) => {
+          const option = field.selectOptions?.find((opt) => opt.label === val);
+          return (
+            <span
+              key={idx}
+              className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium border"
+              style={{
+                borderColor: option?.borderColor || '#e5e7eb',
+                color: option?.textColor || '#374151',
+                backgroundColor: option?.bgColor || '#f3f4f6',
+              }}
+            >
+              {val}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // Multiline — перенос текста
+  if (field?.type === 'multiline') {
+    return (
+      <div className="whitespace-pre-wrap text-sm text-gray-900 dark:text-gray-100 break-words leading-tight">
+        {value}
+      </div>
+    );
+  }
+
+  // File — файлы с иконками
+  if (field?.type === 'file') {
+    const files = value.split(',').map((s) => s.trim()).filter((s) => s);
+    if (files.length === 0) return '—';
+    return (
+      <div className="flex flex-wrap gap-1">
+        {files.map((file, idx) => (
+          <span
+            key={idx}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
+          >
+            {getFileIcon(file)}
+            {file}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  // Boolean
+  if (field?.type === 'boolean') {
+    const isTrue = value === 'true' || value === '1';
+    return (
+      <span
+        className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+          isTrue
+            ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+            : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+        }`}
+      >
+        {isTrue ? 'Да' : 'Нет'}
+      </span>
+    );
+  }
+
+  // Number
+  if (field?.type === 'number') {
+    const prefix = field.prefix ? `${field.prefix} ` : '';
+    const postfix = field.postfix ? ` ${field.postfix}` : '';
+    return `${prefix}${value}${postfix}`;
+  }
+
+  // Datetime
+  if (field?.type === 'datetime') {
+    return value;
+  }
+
+  return value;
 }
 
 /**

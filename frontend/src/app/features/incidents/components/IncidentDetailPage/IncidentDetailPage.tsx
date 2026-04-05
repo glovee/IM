@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, type ChangeEvent } from 'react';
+import React, { useState, useMemo, useEffect, type ChangeEvent } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import {
   ArrowLeft,
@@ -29,6 +29,7 @@ import {
   Server,
   Download,
 } from 'lucide-react';
+import * as Icons from 'lucide-react';
 import { mockUser, mockUsersDirectory } from '../../../../data/mockData.ts';
 import { useTeamsStore } from '../../../../store/teamsStore.ts';
 import DraggableField from '../DraggableField.tsx';
@@ -37,12 +38,101 @@ import DraggableIncidentAction from '../DraggableIncidentAction.tsx';
 import { InvestigationAttachment, InvestigationEntry, useIncidentCollaboration } from '../../../../store/incidentCollaboration.ts';
 import { useIncidentTypesStore } from '../../../../store/incidentTypesStore.ts';
 import { useIncidentFieldsStore } from '../../../../store/incidentFieldsStore.ts';
+import { useIncidentDetailStore } from '../../../../store/incidentDetailStore.ts';
 import { useIncidentActionsStore } from '../../../../store/incidentActionsStore.ts';
 import { getIncidentTypeDefinition } from '../../../../config/incident-config.tsx';
-import { getFileIcon, getFileIconLarge } from '../../utils/fileIcons.tsx';
+import { getFileIcon } from '../../utils/fileIcons.tsx';
 import { useIncidentsStore } from '../../../../store/incidents.ts';
 import { Incident } from '../../../../types/incident.ts';
 import IncidentFieldEditDialog from './IncidentFieldEditDialog.tsx';
+
+// Helper: рендерит значение select-поля с цветами из store
+function renderSelectValue(value: string, selectOptions?: { label: string; borderColor: string; textColor: string; bgColor: string }[]): React.ReactNode {
+  if (!value || value === '—' || value === '') return '—';
+  const values = value.split(',').map((v) => v.trim()).filter((v) => v);
+  if (values.length === 0) return '—';
+  return (
+    <div className="flex flex-wrap gap-1">
+      {values.map((val, idx) => {
+        const option = selectOptions?.find((opt) => opt.label === val);
+        return (
+          <span
+            key={idx}
+            className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium border"
+            style={{
+              borderColor: option?.borderColor || '#e5e7eb',
+              color: option?.textColor || '#374151',
+              backgroundColor: option?.bgColor || '#f3f4f6',
+            }}
+          >
+            {val}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+// Helper: получает определение поля из store (baseFields + extraFields)
+// Маппинг русских ключей на store ID
+const keyToStoreIdMap: Record<string, string> = {
+  'название': 'title',
+  'ответственный': 'assignee',
+  'источник': 'source',
+  'хост': 'host',
+  'login': 'login',
+  'статус': 'status',
+  'команда': 'team',
+  'дата': 'date',
+};
+
+function getFieldDef(fieldId: string) {
+  const store = useIncidentFieldsStore.getState();
+  const storeId = keyToStoreIdMap[fieldId] || fieldId;
+  return store.baseFields.find((f) => f.id === storeId) || store.getExtraFieldById(fieldId) || null;
+}
+
+// Helper: рендерит значение поля по его ID, используя определение из store
+function renderFieldValueByStore(fieldId: string, value: string): React.ReactNode {
+  if (!value || value === '—' || value === '') return value || '—';
+  const def = getFieldDef(fieldId);
+  if (!def) return value;
+
+  if (def.type === 'select') {
+    return renderSelectValue(value, def.selectOptions);
+  }
+  if (def.type === 'boolean') {
+    const isTrue = value === 'true' || value === '1';
+    return (
+      <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${isTrue ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
+        {isTrue ? 'Да' : 'Нет'}
+      </span>
+    );
+  }
+  if (def.type === 'multiline') {
+    return <div className="whitespace-pre-wrap text-sm text-gray-900 dark:text-gray-100">{value}</div>;
+  }
+  if (def.type === 'file') {
+    const files = value.split(',').map((s) => s.trim()).filter((s) => s);
+    if (files.length === 0) return '—';
+    return (
+      <div className="flex flex-wrap gap-1">
+        {files.map((file, i) => (
+          <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+            {getFileIcon(file)}
+            {file}
+          </span>
+        ))}
+      </div>
+    );
+  }
+  if (def.type === 'number') {
+    const prefix = def.prefix ? `${def.prefix} ` : '';
+    const postfix = def.postfix ? ` ${def.postfix}` : '';
+    return `${prefix}${value}${postfix}`;
+  }
+  return value;
+}
 
 // Field type definitions for editor and display
 interface FieldTypeDefinition {
@@ -52,9 +142,19 @@ interface FieldTypeDefinition {
   allowMultiple?: boolean;
   selectOptions?: { label: string; value: string }[];
   icon: React.ReactNode;
+  iconBg?: React.CSSProperties;
   getValue: (incident: Incident) => React.ReactNode;
   prefix?: string;
   postfix?: string;
+}
+
+// Helper: получает фон иконки из store
+function getIconBg(fieldId: string): React.CSSProperties {
+  const def = getFieldDef(fieldId);
+  if (def?.iconColor) {
+    return { backgroundColor: `${def.iconColor}20` };
+  }
+  return {};
 }
 
 const fieldTypes: FieldTypeDefinition[] = [
@@ -69,28 +169,17 @@ const fieldTypes: FieldTypeDefinition[] = [
       { label: 'Закрыт', value: 'Закрыт' },
       { label: 'Ложный', value: 'Ложный' },
     ],
-    icon: <Activity className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />,
-    getValue: (incident) => {
-      const status = incident.статус;
-      const colors: Record<string, string> = {
-        'Закрыт': 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300',
-        'Открыт': 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
-        'В работе': 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400',
-        'Расследование': 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
-      };
-      return (
-        <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${colors[status] || 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
-          {status}
-        </span>
-      );
-    }
+    icon: <Activity className="w-5 h-5" style={{ color: getFieldDef('статус')?.iconColor || '#6366f1' }} />,
+    iconBg: getIconBg('статус'),
+    getValue: (incident) => renderFieldValueByStore('статус', incident.статус),
   },
   {
     id: 'команда',
     label: 'Команда',
     type: 'select',
     selectOptions: [], // Will be populated dynamically
-    icon: <Users className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />,
+    icon: <Users className="w-5 h-5" style={{ color: getFieldDef('команда')?.iconColor || '#06b6d4' }} />,
+    iconBg: getIconBg('команда'),
     getValue: (incident) => incident.команда
   },
   {
@@ -103,27 +192,19 @@ const fieldTypes: FieldTypeDefinition[] = [
       { label: 'Высокий', value: 'Высокий' },
       { label: 'Критический', value: 'Критический' },
     ],
-    icon: <Flag className="w-5 h-5 text-orange-600 dark:text-orange-400" />,
+    icon: <Flag className="w-5 h-5" style={{ color: getFieldDef('priority')?.iconColor || '#f97316' }} />,
+    iconBg: getIconBg('priority'),
     getValue: (incident) => {
-      const priority = incident.дополнительныеПоля?.priority || '—';
-      const colors: Record<string, string> = {
-        'Низкий': 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
-        'Средний': 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400',
-        'Высокий': 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
-        'Критический': 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400',
-      };
-      return priority !== '—' ? (
-        <span className={`inline-flex px-3 py-1 rounded-full text-xs font-medium ${colors[priority] || 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
-          {priority}
-        </span>
-      ) : '—';
+      const value = incident.дополнительныеПоля?.priority;
+      return renderFieldValueByStore('priority', value || '—');
     }
   },
   {
     id: 'detected_at',
     label: 'Дата обнаружения',
     type: 'datetime',
-    icon: <Calendar className="w-5 h-5 text-rose-600 dark:text-rose-400" />,
+    icon: <Calendar className="w-5 h-5" style={{ color: getFieldDef('detected_at')?.iconColor || '#f43f5e' }} />,
+    iconBg: getIconBg('detected_at'),
     getValue: (incident) => {
       const value = incident.дополнительныеПоля?.detected_at;
       return value ? value : '—';
@@ -133,15 +214,12 @@ const fieldTypes: FieldTypeDefinition[] = [
     id: 'description',
     label: 'Описание',
     type: 'multiline',
-    icon: <FileText className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />,
+    icon: <FileText className="w-5 h-5" style={{ color: getFieldDef('description')?.iconColor || '#06b6d4' }} />,
+    iconBg: getIconBg('description'),
     getValue: (incident) => {
       const value = incident.дополнительныеПоля?.description || '—';
       if (value === '—') return value;
-      return (
-        <div className="whitespace-pre-wrap text-sm text-gray-900 dark:text-gray-100">
-          {value}
-        </div>
-      );
+      return renderFieldValueByStore('description', value);
     }
   },
   {
@@ -149,64 +227,34 @@ const fieldTypes: FieldTypeDefinition[] = [
     label: 'Время реакции (мин)',
     type: 'number',
     postfix: 'мин',
-    icon: <Clock className="w-5 h-5 text-teal-600 dark:text-teal-400" />,
+    icon: <Clock className="w-5 h-5" style={{ color: getFieldDef('response_time')?.iconColor || '#14b8a6' }} />,
+    iconBg: getIconBg('response_time'),
     getValue: (incident) => {
       const value = incident.дополнительныеПоля?.response_time;
       if (!value) return '—';
-      return `${value} мин`;
+      return renderFieldValueByStore('response_time', value);
     }
   },
   {
     id: 'needs_escalation',
     label: 'Требуется эскалация',
     type: 'boolean',
-    icon: <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />,
+    icon: <AlertCircle className="w-5 h-5" style={{ color: getFieldDef('needs_escalation')?.iconColor || '#ef4444' }} />,
+    iconBg: getIconBg('needs_escalation'),
     getValue: (incident) => {
       const value = incident.дополнительныеПоля?.needs_escalation;
       if (!value || value === '—' || value === '') return '—';
-      const isTrue = String(value) === 'true' || String(value) === '1';
-      return isTrue ? (
-        <span className="inline-flex px-3 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-          Да
-        </span>
-      ) : (
-        <span className="inline-flex px-3 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
-          Нет
-        </span>
-      );
+      return renderFieldValueByStore('needs_escalation', value);
     }
   },
   {
     id: 'evidence_files',
     label: 'Файлы доказательств',
     type: 'file',
-    icon: getFileIconLarge('file.txt'),
+    icon: <Paperclip className="w-5 h-5 text-slate-600 dark:text-slate-400" />,
     getValue: (incident) => {
       const value = incident.дополнительныеПоля?.evidence_files;
-      if (!value || value === '—' || value === '') return '—';
-      const files = value.split(',').map(s => s.trim()).filter(s => s);
-      if (files.length === 0) return '—';
-      return (
-        <div className="flex flex-wrap gap-1">
-          {files.map((file, i) => (
-            <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
-              {getFileIcon(file)}
-              {file}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  alert(`Скачивание файла: ${file}`);
-                }}
-                className="ml-1 p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
-                title="Скачать"
-              >
-                <Download className="w-3 h-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      );
+      return renderFieldValueByStore('evidence_files', value || '—');
     }
   },
   {
@@ -221,66 +269,48 @@ const fieldTypes: FieldTypeDefinition[] = [
       { label: 'VPN', value: 'VPN' },
       { label: 'Web Server', value: 'Web Server' },
     ],
-    icon: <Server className="w-5 h-5 text-blue-600 dark:text-blue-400" />,
+    icon: <Server className="w-5 h-5" style={{ color: getFieldDef('affected_systems')?.iconColor || '#6366f1' }} />,
+    iconBg: getIconBg('affected_systems'),
     getValue: (incident) => {
       const value = incident.дополнительныеПоля?.affected_systems;
-      if (!value || value === '—' || value === '') return '—';
-      const systems = value.split(',').map(s => s.trim()).filter(s => s);
-      if (systems.length === 0) return '—';
-      
-      // Цвета для систем
-      const systemColors: Record<string, { bg: string; text: string }> = {
-        'Active Directory': { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-400' },
-        'Exchange': { bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' },
-        'File Server': { bg: 'bg-yellow-100 dark:bg-yellow-900/30', text: 'text-yellow-700 dark:text-yellow-400' },
-        'VPN': { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-400' },
-        'Web Server': { bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-400' },
-      };
-      
-      return (
-        <div className="flex flex-wrap gap-1">
-          {systems.map((system, i) => {
-            const colors = systemColors[system] || { bg: 'bg-gray-100 dark:bg-gray-700', text: 'text-gray-700 dark:text-gray-300' };
-            return (
-              <span key={i} className={`inline-flex px-2 py-1 rounded text-xs font-medium ${colors.bg} ${colors.text}`}>
-                {system}
-              </span>
-            );
-          })}
-        </div>
-      );
+      return renderFieldValueByStore('affected_systems', value || '—');
     }
   },
 ];
 
 // Basic fields without special types
 const basicFields: Omit<FieldTypeDefinition, 'type' | 'selectOptions' | 'allowMultiple' | 'prefix' | 'postfix'>[] = [
-  { id: 'название', label: 'Название', icon: <FileText className="w-5 h-5 text-blue-600 dark:text-blue-400" />, getValue: (incident: Incident) => incident.название },
-  { id: 'ответственный', label: 'Ответственный', icon: <User className="w-5 h-5 text-green-600 dark:text-green-400" />, getValue: (incident: Incident) => incident.ответственный },
-  { id: 'источник', label: 'Источник', icon: <Database className="w-5 h-5 text-purple-600 dark:text-purple-400" />, getValue: (incident: Incident) => incident.источник },
-  { id: 'login', label: 'Нарушитель', icon: <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />, getValue: (incident: Incident) => incident.login },
-  { id: 'хост', label: 'Хост', icon: <Monitor className="w-5 h-5 text-slate-600 dark:text-slate-400" />, getValue: (incident: Incident) => incident.хост },
-  { id: 'дата', label: 'Дата создания', icon: <Calendar className="w-5 h-5 text-pink-600 dark:text-pink-400" />, getValue: (incident: Incident) => incident.дата },
+  { id: 'название', label: 'Название', icon: <FileText className="w-5 h-5" style={{ color: getFieldDef('название')?.iconColor || '#3b82f6' }} />, iconBg: getIconBg('название'), getValue: (incident: Incident) => incident.название },
+  { id: 'ответственный', label: 'Ответственный', icon: <User className="w-5 h-5" style={{ color: getFieldDef('ответственный')?.iconColor || '#22c55e' }} />, iconBg: getIconBg('ответственный'), getValue: (incident: Incident) => incident.ответственный },
+  { id: 'источник', label: 'Источник', icon: <Database className="w-5 h-5" style={{ color: getFieldDef('источник')?.iconColor || '#f97316' }} />, iconBg: getIconBg('источник'), getValue: (incident: Incident) => incident.источник },
+  { id: 'login', label: 'Нарушитель', icon: <AlertTriangle className="w-5 h-5" style={{ color: getFieldDef('login')?.iconColor || '#ef4444' }} />, iconBg: getIconBg('login'), getValue: (incident: Incident) => incident.login },
+  { id: 'хост', label: 'Хост', icon: <Monitor className="w-5 h-5" style={{ color: getFieldDef('хост')?.iconColor || '#6366f1' }} />, iconBg: getIconBg('хост'), getValue: (incident: Incident) => incident.хост },
+  { id: 'дата', label: 'Дата создания', icon: <Calendar className="w-5 h-5" style={{ color: getFieldDef('дата')?.iconColor || '#06b6d4' }} />, iconBg: getIconBg('дата'), getValue: (incident: Incident) => incident.дата },
 ];
 
 // All fields combined - add types to basic fields
 const allFields: FieldTypeDefinition[] = [
   ...basicFields.map(f => {
     if (f.id === 'дата') return { ...f, type: 'datetime' as const };
-    if (f.id === 'источник') return { ...f, type: 'select' as const, selectOptions: [
-      { label: 'SIEM', value: 'SIEM' },
-      { label: 'Firewall', value: 'Firewall' },
-      { label: 'DLP System', value: 'DLP System' },
-      { label: 'Antivirus', value: 'Antivirus' },
-      { label: 'Network Monitor', value: 'Network Monitor' },
-      { label: 'Email Gateway', value: 'Email Gateway' },
-      { label: 'UEBA', value: 'UEBA' },
-      { label: 'EDR', value: 'EDR' },
-      { label: 'WAF', value: 'WAF' },
-      { label: 'Resource Monitor', value: 'Resource Monitor' },
-      { label: 'Device Control', value: 'Device Control' },
-      { label: 'Email Security', value: 'Email Security' },
-    ]};
+    if (f.id === 'источник') return {
+      ...f,
+      type: 'select' as const,
+      selectOptions: [
+        { label: 'SIEM', value: 'SIEM' },
+        { label: 'Firewall', value: 'Firewall' },
+        { label: 'DLP System', value: 'DLP System' },
+        { label: 'Antivirus', value: 'Antivirus' },
+        { label: 'Network Monitor', value: 'Network Monitor' },
+        { label: 'Email Gateway', value: 'Email Gateway' },
+        { label: 'UEBA', value: 'UEBA' },
+        { label: 'EDR', value: 'EDR' },
+        { label: 'WAF', value: 'WAF' },
+        { label: 'Resource Monitor', value: 'Resource Monitor' },
+        { label: 'Device Control', value: 'Device Control' },
+        { label: 'Email Security', value: 'Email Security' },
+      ],
+      getValue: (incident: Incident) => renderFieldValueByStore('источник', incident.источник),
+    };
     return { ...f, type: 'string' as const };
   }),
   ...fieldTypes,
@@ -389,6 +419,9 @@ export default function IncidentDetailPage() {
   const typesStore = useIncidentTypesStore();
   const getExtraFieldsByIds = useIncidentFieldsStore((state) => state.getExtraFieldsByIds);
   const getExtraFieldById = useIncidentFieldsStore((state) => state.getExtraFieldById);
+  const baseFields = useIncidentFieldsStore((state) => state.baseFields);
+  const savedFieldOrder = useIncidentDetailStore((state) => state.getFieldOrder);
+  const setFieldOrder = useIncidentDetailStore((state) => state.setFieldOrder);
   const actionsStore = useIncidentActionsStore();
   const teamNames = useTeamsStore((state) => state.getTeamNames)();
 
@@ -507,46 +540,33 @@ export default function IncidentDetailPage() {
   const typeExtraFieldIds = new Set(typeExtraFields.map(f => f.id));
 
   // Создаём динамические определения для дополнительных полей из store
-  const dynamicExtraFieldDefinitions: FieldTypeDefinition[] = typeExtraFields.map(f => ({
-    id: f.id,
-    label: f.name,
-    type: f.type as any,
-    icon: f.type === 'file' ? getFileIconLarge('file.txt') : <FileText className="w-5 h-5 text-gray-600 dark:text-gray-400" />,
-    selectOptions: f.selectOptions?.map(opt => ({ label: opt.label, value: opt.label })),
-    allowMultiple: f.allowMultiple,
-    prefix: f.prefix,
-    postfix: f.postfix,
-    getValue: (incident: Incident) => {
-      const value = incident.дополнительныеПоля?.[f.id];
-      if (!value || value === '') return '—';
-      if (f.type === 'file') {
-        const files = value.split(',').map(s => s.trim()).filter(s => s);
-        if (files.length === 0) return '—';
-        return (
-          <div className="flex flex-wrap gap-1">
-            {files.map((file, i) => (
-              <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
-                {getFileIcon(file)}
-                {file}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    alert(`Скачивание файла: ${file}`);
-                  }}
-                  className="ml-1 p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors"
-                  title="Скачать"
-                >
-                  <Download className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-        );
-      }
-      return value;
+  const dynamicExtraFieldDefinitions: FieldTypeDefinition[] = typeExtraFields.map(f => {
+    const IconComponent = (Icons as any)[f.icon];
+    let IconEl: React.ReactNode;
+    if (IconComponent) {
+      IconEl = React.createElement(IconComponent, { className: 'w-5 h-5', style: { color: f.iconColor || '#6366f1' } });
+    } else if (f.type === 'file') {
+      IconEl = <Paperclip className="w-5 h-5 text-slate-600 dark:text-slate-400" />;
+    } else {
+      IconEl = <FileText className="w-5 h-5 text-gray-600 dark:text-gray-400" />;
     }
-  }));
+
+    return {
+      id: f.id,
+      label: f.name,
+      type: f.type as any,
+      icon: IconEl,
+      iconBg: f.iconColor ? { backgroundColor: `${f.iconColor}20` } : {},
+      selectOptions: f.selectOptions?.map(opt => ({ label: opt.label, value: opt.label })),
+      allowMultiple: f.allowMultiple,
+      prefix: f.prefix,
+      postfix: f.postfix,
+      getValue: (incident: Incident) => {
+        const value = incident.дополнительныеПоля?.[f.id];
+        return renderFieldValueByStore(f.id, value || '—');
+      }
+    };
+  });
 
   // All fields combined - include dynamic extra fields
   const allFieldsWithExtras = [...allFields.map(f => {
@@ -566,8 +586,46 @@ export default function IncidentDetailPage() {
     return typeExtraFieldIds.has(field.id);
   });
 
+  // Применяем сохранённый порядок полей
+  const order = incident ? savedFieldOrder(incident.типИнцидента) : null;
+  let orderedRequiredFields = requiredFields;
+  let orderedOptionalFields = typeSpecificFields;
+
+  if (order && order.length > 0) {
+    const allFields = [...requiredFields, ...typeSpecificFields];
+    const orderMap = new Map(order.map((id, idx) => [id, idx]));
+
+    // Сортируем поля по сохранённому порядку, новые поля добавляем в конец
+    orderedRequiredFields = requiredFields
+      .sort((a, b) => (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity));
+    orderedOptionalFields = typeSpecificFields
+      .sort((a, b) => (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity));
+  }
+
+  // Функция перемещения полей (drag-and-drop)
+  const moveField = (dragIndex: number, hoverIndex: number, isOptional = false) => {
+    if (!incident) return;
+    const fields = isOptional ? orderedOptionalFields : orderedRequiredFields;
+    if (dragIndex < 0 || dragIndex >= fields.length || hoverIndex < 0 || hoverIndex >= fields.length) return;
+
+    const newFields = [...fields];
+    const [removed] = newFields.splice(dragIndex, 1);
+    newFields.splice(hoverIndex, 0, removed);
+
+    // Сохраняем порядок всех полей
+    const allFieldIds = [...newFields.map(f => f.id)];
+    if (!isOptional) {
+      // Для базовых полей добавляем и дополнительные
+      allFieldIds.push(...orderedOptionalFields.map(f => f.id));
+    } else {
+      // Для дополнительных добавляем базовые в начале
+      allFieldIds.unshift(...orderedRequiredFields.map(f => f.id));
+    }
+    setFieldOrder(incident.типИнцидента, allFieldIds);
+  };
+
   // Отображаем все дополнительные поля, даже если они пустые
-  const displayedOptionalFields = typeSpecificFields;
+  const displayedOptionalFields = orderedOptionalFields;
 
   if (!incident) {
     return (
@@ -586,54 +644,21 @@ export default function IncidentDetailPage() {
   }
 
   const openFieldEditor = (fieldId: string, label: string) => {
-    // Find field type definition from allFields (has type info)
-    const fieldDef = allFields.find(f => f.id === fieldId);
-    
     // Для дополнительных полей берем информацию из store
     const storeField = getExtraFieldById(fieldId);
+    // Для базовых полей ищем с маппингом
+    const baseFieldDef = getFieldDef(fieldId);
+    const fieldDef = storeField || baseFieldDef || allFields.find(f => f.id === fieldId) || null;
 
     let inputType: 'text' | 'textarea' | 'select' | 'boolean' | 'datetime' | 'file' | 'number' | 'multiselect' = 'text';
     let value = String(incident[fieldId as keyof Incident] ?? incident.дополнительныеПоля?.[fieldId] ?? '');
     let options: { label: string; value: string }[] = [];
 
-    // Используем тип из store если есть
-    if (storeField) {
-      switch (storeField.type) {
-        case 'select':
-          inputType = storeField.allowMultiple ? 'multiselect' : 'select';
-          options = storeField.selectOptions?.map(opt => ({ label: opt.label, value: opt.label })) || [];
-          value = String(incident.дополнительныеПоля?.[fieldId] || incident[fieldId as keyof Incident] || '');
-          break;
-        case 'boolean':
-          inputType = 'boolean';
-          value = String(incident.дополнительныеПоля?.[fieldId] || incident[fieldId as keyof Incident] || 'false');
-          break;
-        case 'datetime':
-          inputType = 'datetime';
-          value = String(incident.дополнительныеПоля?.[fieldId] || incident[fieldId as keyof Incident] || '');
-          break;
-        case 'multiline':
-          inputType = 'textarea';
-          value = String(incident.дополнительныеПоля?.[fieldId] || incident[fieldId as keyof Incident] || '');
-          break;
-        case 'file':
-          inputType = 'file';
-          value = String(incident.дополнительныеПоля?.[fieldId] || incident[fieldId as keyof Incident] || '');
-          break;
-        case 'number':
-          inputType = 'number';
-          value = String(incident.дополнительныеПоля?.[fieldId] || incident[fieldId as keyof Incident] || '0');
-          break;
-        default:
-          inputType = 'text';
-          value = String(incident.дополнительныеПоля?.[fieldId] || incident[fieldId as keyof Incident] || '');
-      }
-    } else if (fieldDef) {
-      // Fallback к fieldDef если store поле не найдено
+    if (fieldDef) {
       switch (fieldDef.type) {
         case 'select':
           inputType = fieldDef.allowMultiple ? 'multiselect' : 'select';
-          options = fieldDef.selectOptions || [];
+          options = fieldDef.selectOptions?.map(opt => ({ label: opt.label, value: opt.label })) || [];
           value = String(incident.дополнительныеПоля?.[fieldId] || incident[fieldId as keyof Incident] || '');
           break;
         case 'boolean':
@@ -668,9 +693,9 @@ export default function IncidentDetailPage() {
       inputType,
       value,
       options,
-      isAdditional: !!incident.дополнительныеПоля?.[fieldId],
-      prefix: storeField?.prefix || fieldDef?.prefix,
-      postfix: storeField?.postfix || fieldDef?.postfix
+      isAdditional: !!storeField || incident.дополнительныеПоля?.[fieldId] !== undefined,
+      prefix: fieldDef?.prefix,
+      postfix: fieldDef?.postfix
     });
   };
 
@@ -886,15 +911,16 @@ export default function IncidentDetailPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {requiredFields.map((field, index) => (
+          {orderedRequiredFields.map((field, index) => (
             <DraggableField
               key={field.id}
               id={field.id}
               label={field.label}
               value={field.getValue(incident)}
               icon={field.icon}
+              iconBg={field.iconBg}
               index={index}
-              moveField={() => {}}
+              moveField={(dragIndex, hoverIndex) => moveField(dragIndex, hoverIndex, false)}
               action={
                 <button
                   onClick={() => openFieldEditor(field.id, field.label)}
@@ -919,8 +945,9 @@ export default function IncidentDetailPage() {
                   label={field.label}
                   value={field.getValue(incident)}
                   icon={field.icon}
-                  index={requiredFields.length + index}
-                  moveField={() => {}}
+                  iconBg={field.iconBg}
+                  index={orderedRequiredFields.length + index}
+                  moveField={(dragIndex, hoverIndex) => moveField(dragIndex, hoverIndex, true)}
                   action={
                     <button
                       onClick={() => openFieldEditor(field.id, field.label)}

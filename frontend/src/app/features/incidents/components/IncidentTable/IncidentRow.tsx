@@ -37,6 +37,7 @@ export default function IncidentRow({ incident, columns }: IncidentRowProps) {
   const typesStore = useIncidentTypesStore();
   const getExtraFieldsByIds = useIncidentFieldsStore((state) => state.getExtraFieldsByIds);
   const getExtraFieldById = useIncidentFieldsStore((state) => state.getExtraFieldById);
+  const baseFields = useIncidentFieldsStore((state) => state.baseFields);
   const teamNames = useTeamsStore((state) => state.getTeamNames)();
   const incidentType = getIncidentTypeDefinition(incident.типИнцидента);
   const actionsByIncident = useIncidentCollaboration((state) => state.actionsByIncident);
@@ -61,18 +62,19 @@ export default function IncidentRow({ incident, columns }: IncidentRowProps) {
   
   // Функция для получения иконки по id поля
   const getFieldIcon = (id: string) => {
-    // Сначала пытаемся получить иконку из store
-    const storeField = getExtraFieldById(id);
+    // Ищем и в extraFields, и в baseFields
+    const storeField = findFieldDefinition(id);
     if (storeField) {
       const IconComponent = (Icons as any)[storeField.icon];
       if (IconComponent) {
-        return { 
-          icon: <IconComponent className="w-5 h-5" style={{ color: storeField.iconColor }} />, 
-          bg: `${storeField.iconColor}20` 
+        return {
+          icon: <IconComponent className="w-5 h-5" style={{ color: storeField.iconColor }} />,
+          bgStyle: { backgroundColor: `${storeField.iconColor}20` },
+          bg: ''
         };
       }
     }
-    
+
     // Fallback на захардкоженные иконки
     const iconMap: Record<string, { icon: any; bg: string }> = {
       'priority': { icon: <Flag className="w-5 h-5 text-orange-600 dark:text-orange-400" />, bg: 'bg-orange-100 dark:bg-orange-900' },
@@ -83,7 +85,8 @@ export default function IncidentRow({ incident, columns }: IncidentRowProps) {
       'affected_systems': { icon: <Server className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />, bg: 'bg-indigo-100 dark:bg-indigo-900' },
       'evidence_files': { icon: <Paperclip className="w-5 h-5 text-slate-600 dark:text-slate-400" />, bg: 'bg-slate-100 dark:bg-slate-900' },
     };
-    return iconMap[id] || { icon: <FileText className="w-5 h-5 text-gray-600 dark:text-gray-400" />, bg: 'bg-gray-100 dark:bg-gray-900' };
+    const fallback = iconMap[id] || { icon: <FileText className="w-5 h-5 text-gray-600 dark:text-gray-400" />, bg: 'bg-gray-100 dark:bg-gray-900' };
+    return { ...fallback, bgStyle: {} };
   };
   
   // Функция для получения имени поля
@@ -132,14 +135,32 @@ export default function IncidentRow({ incident, columns }: IncidentRowProps) {
     'affected_systems': ['Active Directory', 'Exchange', 'File Server', 'VPN', 'Web Server'],
   };
 
+  // Хелпер: ищет определение поля и в baseFields, и в extraFields
+  // Маппинг русских ключей на английские ID в store
+  const keyToStoreIdMap: Record<string, string> = {
+    'название': 'title',
+    'ответственный': 'assignee',
+    'источник': 'source',
+    'хост': 'host',
+    'login': 'login',
+    'статус': 'status',
+    'команда': 'team',
+    'дата': 'date',
+  };
+
+  const findFieldDefinition = (fieldKey: string) => {
+    const storeId = keyToStoreIdMap[fieldKey] || fieldKey;
+    return baseFields.find(f => f.id === storeId) || getExtraFieldById(fieldKey) || null;
+  };
+
   // Функция для определения типа ввода по ключу поля
   const getFieldInputType = (fieldKey: string): { inputType: 'text' | 'select' | 'boolean' | 'datetime' | 'textarea' | 'number' | 'multiselect' | 'file', options?: { label: string; value: string }[] } => {
-    // Сначала получаем поле из store
-    const storeField = getExtraFieldById(fieldKey);
-    
+    // Сначала получаем поле из store (и baseFields, и extraFields)
+    const storeField = findFieldDefinition(fieldKey);
+
     if (storeField) {
       const options = storeField.selectOptions?.map(opt => ({ label: opt.label, value: opt.label }));
-      
+
       if (storeField.type === 'select') {
         return { inputType: storeField.allowMultiple ? 'multiselect' : 'select', options };
       }
@@ -149,26 +170,26 @@ export default function IncidentRow({ incident, columns }: IncidentRowProps) {
       if (storeField.type === 'number') return { inputType: 'number', options };
       if (storeField.type === 'file') return { inputType: 'file', options };
     }
-    
+
     // Fallback на slugToTypeMap для базовых полей
     const fieldType = slugToTypeMap[fieldKey] || 'text';
     let stringOptions = selectOptionsMap[fieldKey];
     const options = stringOptions?.map(s => ({ label: s, value: s }));
-    
+
     if (fieldType === 'multiline') return { inputType: 'textarea', options };
     if (fieldType === 'select') return { inputType: 'select', options };
     if (fieldType === 'datetime') return { inputType: 'datetime', options };
     if (fieldType === 'boolean') return { inputType: 'boolean', options };
     if (fieldType === 'number') return { inputType: 'number', options };
     if (fieldType === 'file') return { inputType: 'file', options };
-    
+
     return { inputType: 'text', options };
   };
 
   // Функция для рендеринга значения поля с учётом типа
   const renderFieldValue = (fieldKey: string, value: string) => {
     const { inputType, options } = getFieldInputType(fieldKey);
-    const storeField = getExtraFieldById(fieldKey);
+    const storeField = findFieldDefinition(fieldKey);
     
     // Для select/multiselect полей рендерим цветные бейджи
     if (inputType === 'select' || inputType === 'multiselect') {
@@ -569,11 +590,11 @@ export default function IncidentRow({ incident, columns }: IncidentRowProps) {
                     <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Дополнительные поля</div>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-4">
                       {typeExtraFieldIds.map((id) => {
-                        const { icon, bg } = getFieldIcon(id);
+                        const { icon, bg, bgStyle } = getFieldIcon(id);
                         const fieldName = getFieldDisplayName(id);
                         return (
                           <div key={id} className="flex items-start gap-3 min-w-0">
-                            <div className={`w-10 h-10 ${bg} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                            <div className={`w-10 h-10 ${bg} rounded-lg flex items-center justify-center flex-shrink-0`} style={bgStyle}>
                               {icon}
                             </div>
                             <div className="flex-1 min-w-0">

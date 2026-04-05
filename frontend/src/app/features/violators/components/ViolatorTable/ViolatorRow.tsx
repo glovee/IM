@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { ChevronRight, ChevronDown, MoreVertical, Pencil } from 'lucide-react';
 import { Violator, ViolatorDynamicColumnKey } from '../../../../types/violator.ts';
-import { ViolatorColumnDefinition, getViolatorColumnValue } from '../../../../config/violator-config.tsx';
+import { ViolatorColumnDefinition, getViolatorColumnValueReact } from '../../../../config/violator-config.tsx';
 
 interface ViolatorRowProps {
   violator: Violator;
@@ -60,7 +60,7 @@ export default function ViolatorRow({ violator, columns }: ViolatorRowProps) {
               className="px-3 h-10 flex items-center text-sm text-gray-900 dark:text-gray-100 border-r border-gray-150 dark:border-gray-700 truncate flex-shrink-0"
               style={{ width: `${col.width}px`, userSelect: 'text' }}
             >
-              {getViolatorColumnValue(violator, col.key)}
+              {getViolatorColumnValueReact(violator, col.key)}
             </div>
           ))}
         </div>
@@ -87,7 +87,7 @@ export default function ViolatorRow({ violator, columns }: ViolatorRowProps) {
               {columns.map((col) => (
                 <div key={col.key} className="flex flex-col">
                   <span className="text-xs text-gray-500 dark:text-gray-400">{col.label}</span>
-                  <span className="text-gray-900 dark:text-gray-100">{getViolatorColumnValue(violator, col.key)}</span>
+                  <span className="text-gray-900 dark:text-gray-100">{getViolatorColumnValueReact(violator, col.key)}</span>
                 </div>
               ))}
             </div>
