@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Outlet } from 'react-router';
 import TopBar from './TopBar.tsx';
 import Sidebar from './Sidebar.tsx';
-import { useAppSettings } from '../store/settings.ts';
 import { useTeamsStore } from '../store/teamsStore.ts';
 import { User } from '../types/incident.ts';
 
@@ -17,15 +16,6 @@ const currentUser: User = {
 export default function MainLayout() {
   const teams = useTeamsStore((state) => state.teams);
   const [activeTeam, setActiveTeam] = useState(teams[0]?.name || '');
-  const theme = useAppSettings((state) => state.theme);
-
-  useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [theme]);
 
   const handleLogout = () => {
     console.log('Выход из системы');

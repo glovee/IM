@@ -8,6 +8,35 @@ interface AppSettings {
   setItemsPerPage: (count: number) => void;
 }
 
+function withDisabledTransitions(applyTheme: () => void) {
+  if (typeof document === 'undefined') {
+    applyTheme();
+    return;
+  }
+
+  const style = document.createElement('style');
+  style.appendChild(
+    document.createTextNode('*,*::before,*::after{transition:none !important;}')
+  );
+  document.head.appendChild(style);
+
+  applyTheme();
+  void window.getComputedStyle(document.body);
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      style.remove();
+    });
+  });
+}
+
+function applyThemeClass(theme: 'light' | 'dark') {
+  if (typeof document === 'undefined') return;
+  const root = document.documentElement;
+  root.classList.toggle('dark', theme === 'dark');
+  root.style.colorScheme = theme;
+}
+
 export const useAppSettings = create<AppSettings>()(
   persist(
     (set) => ({
@@ -15,20 +44,14 @@ export const useAppSettings = create<AppSettings>()(
       itemsPerPage: 20,
       setTheme: (theme) => {
         set({ theme });
-        if (theme === 'dark') {
-          document.documentElement.classList.add('dark');
-        } else {
-          document.documentElement.classList.remove('dark');
-        }
+        withDisabledTransitions(() => applyThemeClass(theme));
       },
       setItemsPerPage: (itemsPerPage) => set({ itemsPerPage }),
     }),
     {
       name: 'app-settings',
       onRehydrateStorage: () => (state) => {
-        if (state?.theme === 'dark') {
-          document.documentElement.classList.add('dark');
-        }
+        applyThemeClass(state?.theme ?? 'light');
       },
     }
   )
