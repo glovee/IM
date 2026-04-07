@@ -6,6 +6,7 @@ import { DashboardPage } from "./features/dashboard";
 import { SettingsPage } from "./features/settings";
 import { LoginPage } from "./features/auth";
 import { TrashPage } from "./features/trash";
+import { BoardsPage, BoardDetailPage } from "./features/boards";
 
 export const router = createBrowserRouter([
   {
@@ -22,6 +23,8 @@ export const router = createBrowserRouter([
       { path: "violators", Component: ViolatorsPage },
       { path: "violator/:id", Component: ViolatorDetailPage },
       { path: "dashboard", Component: DashboardPage },
+      { path: "boards", Component: BoardsPage },
+      { path: "boards/:id", Component: BoardDetailPage },
       { path: "settings", Component: SettingsPage },
       { path: "trash", Component: TrashPage },
     ],

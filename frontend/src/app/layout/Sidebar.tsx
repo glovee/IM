@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertCircle, Settings, ChevronLeft, ChevronRight, User, BarChart3, Trash2, AlertTriangle } from 'lucide-react';
+import { AlertCircle, Settings, ChevronLeft, ChevronRight, User, BarChart3, Trash2, AlertTriangle, PanelsTopLeft } from 'lucide-react';
 import { Link, useLocation } from 'react-router';
 
 export default function Sidebar() {
@@ -10,6 +10,7 @@ export default function Sidebar() {
     { id: 'incidents', label: 'Инциденты', icon: AlertCircle, path: '/' },
     { id: 'my-incidents', label: 'Мои инциденты', icon: User, path: '/my-incidents' },
     { id: 'violators', label: 'Нарушители', icon: AlertTriangle, path: '/violators' },
+    { id: 'boards', label: 'Доски', icon: PanelsTopLeft, path: '/boards' },
     { id: 'dashboard', label: 'Дашборд', icon: BarChart3, path: '/dashboard' },
     { id: 'trash', label: 'Корзина', icon: Trash2, path: '/trash' }
   ];
@@ -24,7 +25,9 @@ export default function Sidebar() {
         <nav className="space-y-1 px-2">
           {menuItems.map((item) => {
             const Icon = item.icon;
-            const isActive = location.pathname === item.path;
+            const isActive =
+              location.pathname === item.path ||
+              (item.path !== '/' && location.pathname.startsWith(`${item.path}/`));
             return (
               <Link
                 key={item.id}
