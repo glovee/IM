@@ -11,6 +11,8 @@ interface DraggableFieldProps {
   index: number;
   moveField: (dragIndex: number, hoverIndex: number) => void;
   action?: React.ReactNode;
+  leftAction?: React.ReactNode;
+  dragType?: string;
 }
 
 const FIELD_TYPE = 'FIELD';
@@ -23,12 +25,14 @@ export default function DraggableField({
   iconBg,
   index,
   moveField,
-  action
+  action,
+  leftAction,
+  dragType = FIELD_TYPE,
 }: DraggableFieldProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   const [{ isDragging }, drag, preview] = useDrag({
-    type: FIELD_TYPE,
+    type: dragType,
     item: { index, id },
     collect: (monitor) => ({
       isDragging: monitor.isDragging()
@@ -36,7 +40,7 @@ export default function DraggableField({
   });
 
   const [, drop] = useDrop({
-    accept: FIELD_TYPE,
+    accept: dragType,
     hover: (item: { index: number; id: string }, monitor) => {
       if (!ref.current) return;
 
@@ -44,19 +48,7 @@ export default function DraggableField({
       const hoverIndex = index;
 
       if (dragIndex === hoverIndex) return;
-
-      const hoverBoundingRect = ref.current.getBoundingClientRect();
-      const clientOffset = monitor.getClientOffset();
-      if (!clientOffset) return;
-
-      const hoverMiddleY = (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2;
-      const hoverClientY = clientOffset.y - hoverBoundingRect.top;
-
-      const isDraggingDown = dragIndex < hoverIndex;
-      const isDraggingUp = dragIndex > hoverIndex;
-
-      if (isDraggingDown && hoverClientY < hoverMiddleY) return;
-      if (isDraggingUp && hoverClientY > hoverMiddleY) return;
+      if (!monitor.isOver({ shallow: true })) return;
 
       moveField(dragIndex, hoverIndex);
       item.index = hoverIndex;
@@ -70,6 +62,7 @@ export default function DraggableField({
         if (node) {
           drop(node);
           preview(node);
+          drag(node);
         }
       }}
       className={`bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 ${
@@ -77,8 +70,11 @@ export default function DraggableField({
       }`}
     >
       <div className="flex items-start gap-3">
-        <div ref={(node) => { if (node) drag(node); }} className="cursor-move pt-1">
-          <GripVertical className="w-5 h-5 text-gray-400 dark:text-gray-500" />
+        <div className="flex flex-col items-center gap-2 pt-1">
+          <div className="cursor-move">
+            <GripVertical className="w-5 h-5 text-gray-400 dark:text-gray-500" />
+          </div>
+          {leftAction}
         </div>
         
         <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={iconBg}>

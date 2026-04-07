@@ -6,7 +6,9 @@ import { DynamicColumnKey, Incident } from '../../../../types/incident.ts';
 import ExportButtons from '../ExportButtons.tsx';
 import { getIncidentColumnValueReact, getIncidentTypeDefinition } from '../../../../config/incident-config.tsx';
 import { getFileIcon } from '../../utils/fileIcons.tsx';
+import { mockUser } from '../../../../data/mockData.ts';
 import { useIncidentCollaboration } from '../../../../store/incidentCollaboration.ts';
+import { buildIncidentDetailSettingsKey, useIncidentDetailStore } from '../../../../store/incidentDetailStore.ts';
 import { useIncidentTypesStore } from '../../../../store/incidentTypesStore.ts';
 import { useIncidentFieldsStore } from '../../../../store/incidentFieldsStore.ts';
 import { useTeamsStore } from '../../../../store/teamsStore.ts';
@@ -15,6 +17,8 @@ import IncidentFieldEditDialog from '../IncidentDetailPage/IncidentFieldEditDial
 import { useIncidentsStore } from '../../../../store/incidents.ts';
 
 const incidentStatusOptions = ['Открыт', 'В работе', 'Расследование', 'Закрыт', 'Ложный'];
+const EMPTY_HIDDEN_FIELD_IDS: string[] = [];
+const EMPTY_FIELD_ORDER: string[] = [];
 
 interface IncidentRowProps {
   incident: Incident;
@@ -43,6 +47,14 @@ export default function IncidentRow({ incident, columns }: IncidentRowProps) {
   const actionsByIncident = useIncidentCollaboration((state) => state.actionsByIncident);
   const initializeIncidentActions = useIncidentCollaboration((state) => state.initializeIncidentActions);
   const updateIncident = useIncidentsStore((state) => state.updateIncident);
+  const fieldOrdersByKey = useIncidentDetailStore((state) => state.fieldOrders);
+  const hiddenFieldIds = useIncidentDetailStore((state) => {
+    const settingsKey = buildIncidentDetailSettingsKey(mockUser.id, incident.типИнцидента);
+    return state.hiddenFields[settingsKey]?.hiddenFieldIds ?? EMPTY_HIDDEN_FIELD_IDS;
+  });
+  const settingsKey = buildIncidentDetailSettingsKey(mockUser.id, incident.типИнцидента);
+  const fieldOrder = fieldOrdersByKey[settingsKey]?.order ?? EMPTY_FIELD_ORDER;
+  const hiddenFieldIdSet = useMemo(() => new Set(hiddenFieldIds), [hiddenFieldIds]);
   
   // Получаем fieldIds для типа инцидента из types store
   const typeFieldIds = typesStore.getTypeFieldIds(incident.типИнцидента);
@@ -52,7 +64,12 @@ export default function IncidentRow({ incident, columns }: IncidentRowProps) {
 
   // Получаем ТОЛЬКО дополнительные поля, выбранные для типа инцидента
   const typeExtraFields = getExtraFieldsByIds(typeFieldIds);
-  const typeExtraFieldIds = typeExtraFields.filter(f => !baseFieldIds.has(f.id)).map(f => f.id);
+  const orderMap = useMemo(() => new Map(fieldOrder.map((fieldId, index) => [fieldId, index])), [fieldOrder]);
+  const typeExtraFieldIds = typeExtraFields
+    .filter((f) => !baseFieldIds.has(f.id))
+    .map((f) => f.id)
+    .filter((fieldId) => !hiddenFieldIdSet.has(fieldId))
+    .sort((a, b) => (orderMap.get(a) ?? Infinity) - (orderMap.get(b) ?? Infinity));
 
   useEffect(() => {
     initializeIncidentActions(incident.id, incident.типИнцидента);
@@ -310,64 +327,69 @@ export default function IncidentRow({ incident, columns }: IncidentRowProps) {
     );
   };
 
-  const requiredDetails = useMemo(() => ([
-    {
-      key: 'название',
-      label: 'Название',
-      value: incident.название,
-      icon: <FileText className="w-5 h-5 text-blue-600 dark:text-blue-400" />,
-      iconBg: 'bg-blue-100 dark:bg-blue-900',
-    },
-    {
-      key: 'ответственный',
-      label: 'Ответственный',
-      value: incident.ответственный,
-      icon: <User className="w-5 h-5 text-green-600 dark:text-green-400" />,
-      iconBg: 'bg-green-100 dark:bg-green-900',
-    },
-    {
-      key: 'источник',
-      label: 'Источник',
-      value: incident.источник,
-      icon: <Database className="w-5 h-5 text-purple-600 dark:text-purple-400" />,
-      iconBg: 'bg-purple-100 dark:bg-purple-900',
-    },
-    {
-      key: 'login',
-      label: 'Нарушитель',
-      value: incident.login,
-      icon: <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />,
-      iconBg: 'bg-red-100 dark:bg-red-900',
-    },
-    {
-      key: 'хост',
-      label: 'Хост',
-      value: incident.хост,
-      icon: <Monitor className="w-5 h-5 text-slate-600 dark:text-slate-400" />,
-      iconBg: 'bg-slate-100 dark:bg-slate-900',
-    },
-    {
-      key: 'статус',
-      label: 'Статус',
-      value: incident.статус,
-      icon: <Activity className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />,
-      iconBg: 'bg-indigo-100 dark:bg-indigo-900',
-    },
-    {
-      key: 'команда',
-      label: 'Команда',
-      value: incident.команда,
-      icon: <Users className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />,
-      iconBg: 'bg-cyan-100 dark:bg-cyan-900',
-    },
-    {
-      key: 'дата',
-      label: 'Дата создания',
-      value: incident.дата,
-      icon: <Calendar className="w-5 h-5 text-pink-600 dark:text-pink-400" />,
-      iconBg: 'bg-pink-100 dark:bg-pink-900',
-    },
-  ]), [incident]);
+  const requiredDetails = useMemo(() => {
+    const orderMap = new Map(fieldOrder.map((fieldId, index) => [fieldId, index]));
+    return [
+      {
+        key: 'название',
+        label: 'Название',
+        value: incident.название,
+        icon: <FileText className="w-5 h-5 text-blue-600 dark:text-blue-400" />,
+        iconBg: 'bg-blue-100 dark:bg-blue-900',
+      },
+      {
+        key: 'ответственный',
+        label: 'Ответственный',
+        value: incident.ответственный,
+        icon: <User className="w-5 h-5 text-green-600 dark:text-green-400" />,
+        iconBg: 'bg-green-100 dark:bg-green-900',
+      },
+      {
+        key: 'источник',
+        label: 'Источник',
+        value: incident.источник,
+        icon: <Database className="w-5 h-5 text-purple-600 dark:text-purple-400" />,
+        iconBg: 'bg-purple-100 dark:bg-purple-900',
+      },
+      {
+        key: 'login',
+        label: 'Нарушитель',
+        value: incident.login,
+        icon: <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />,
+        iconBg: 'bg-red-100 dark:bg-red-900',
+      },
+      {
+        key: 'хост',
+        label: 'Хост',
+        value: incident.хост,
+        icon: <Monitor className="w-5 h-5 text-slate-600 dark:text-slate-400" />,
+        iconBg: 'bg-slate-100 dark:bg-slate-900',
+      },
+      {
+        key: 'статус',
+        label: 'Статус',
+        value: incident.статус,
+        icon: <Activity className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />,
+        iconBg: 'bg-indigo-100 dark:bg-indigo-900',
+      },
+      {
+        key: 'команда',
+        label: 'Команда',
+        value: incident.команда,
+        icon: <Users className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />,
+        iconBg: 'bg-cyan-100 dark:bg-cyan-900',
+      },
+      {
+        key: 'дата',
+        label: 'Дата создания',
+        value: incident.дата,
+        icon: <Calendar className="w-5 h-5 text-pink-600 dark:text-pink-400" />,
+        iconBg: 'bg-pink-100 dark:bg-pink-900',
+      },
+    ]
+      .filter((detail) => !hiddenFieldIdSet.has(detail.key))
+      .sort((a, b) => (orderMap.get(a.key) ?? Infinity) - (orderMap.get(b.key) ?? Infinity));
+  }, [fieldOrder, hiddenFieldIdSet, incident]);
 
   const handleRowDoubleClick = () => {
     navigate(`/incident/${incident.id}`);

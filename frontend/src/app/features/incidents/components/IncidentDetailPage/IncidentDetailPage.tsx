@@ -24,6 +24,8 @@ import {
   Reply,
   ChevronUp,
   ChevronDown,
+  Eye,
+  EyeOff,
   Flag,
   Clock,
   Server,
@@ -38,13 +40,15 @@ import DraggableIncidentAction from '../DraggableIncidentAction.tsx';
 import { InvestigationAttachment, InvestigationEntry, useIncidentCollaboration } from '../../../../store/incidentCollaboration.ts';
 import { useIncidentTypesStore } from '../../../../store/incidentTypesStore.ts';
 import { useIncidentFieldsStore } from '../../../../store/incidentFieldsStore.ts';
-import { useIncidentDetailStore } from '../../../../store/incidentDetailStore.ts';
+import { buildIncidentDetailSettingsKey, useIncidentDetailStore } from '../../../../store/incidentDetailStore.ts';
 import { useIncidentActionsStore } from '../../../../store/incidentActionsStore.ts';
 import { getIncidentTypeDefinition } from '../../../../config/incident-config.tsx';
 import { getFileIcon } from '../../utils/fileIcons.tsx';
 import { useIncidentsStore } from '../../../../store/incidents.ts';
 import { Incident } from '../../../../types/incident.ts';
 import IncidentFieldEditDialog from './IncidentFieldEditDialog.tsx';
+
+const EMPTY_HIDDEN_FIELD_IDS: string[] = [];
 
 // Helper: рендерит значение select-поля с цветами из store
 function renderSelectValue(value: string, selectOptions?: { label: string; borderColor: string; textColor: string; bgColor: string }[]): React.ReactNode {
@@ -420,14 +424,23 @@ export default function IncidentDetailPage() {
   const getExtraFieldsByIds = useIncidentFieldsStore((state) => state.getExtraFieldsByIds);
   const getExtraFieldById = useIncidentFieldsStore((state) => state.getExtraFieldById);
   const baseFields = useIncidentFieldsStore((state) => state.baseFields);
-  const savedFieldOrder = useIncidentDetailStore((state) => state.getFieldOrder);
   const setFieldOrder = useIncidentDetailStore((state) => state.setFieldOrder);
+  const hideFieldForUser = useIncidentDetailStore((state) => state.hideField);
+  const showFieldForUser = useIncidentDetailStore((state) => state.showField);
+  const fieldOrdersByKey = useIncidentDetailStore((state) => state.fieldOrders);
   const actionsStore = useIncidentActionsStore();
   const teamNames = useTeamsStore((state) => state.getTeamNames)();
+  const currentUserId = mockUser.id;
 
   const incident = useMemo(() => {
     return incidents.find((inc) => inc.id === id);
   }, [id, incidents]);
+  const hiddenFieldsByKey = useIncidentDetailStore((state) => state.hiddenFields);
+  const hiddenFieldIds = useMemo(() => {
+    if (!incident) return EMPTY_HIDDEN_FIELD_IDS;
+    const settingsKey = buildIncidentDetailSettingsKey(currentUserId, incident.типИнцидента);
+    return hiddenFieldsByKey[settingsKey]?.hiddenFieldIds ?? EMPTY_HIDDEN_FIELD_IDS;
+  }, [hiddenFieldsByKey, currentUserId, incident]);
 
   const actionsByIncident = useIncidentCollaboration((state) => state.actionsByIncident);
   const investigationByIncident = useIncidentCollaboration((state) => state.investigationByIncident);
@@ -586,46 +599,54 @@ export default function IncidentDetailPage() {
     return typeExtraFieldIds.has(field.id);
   });
 
-  // Применяем сохранённый порядок полей
-  const order = incident ? savedFieldOrder(incident.типИнцидента) : null;
+  // Применяем сохранённый порядок полей (по пользователю и типу инцидента)
+  const order = useMemo(() => {
+    if (!incident) return null;
+    const settingsKey = buildIncidentDetailSettingsKey(currentUserId, incident.типИнцидента);
+    return fieldOrdersByKey[settingsKey]?.order ?? null;
+  }, [currentUserId, fieldOrdersByKey, incident]);
   let orderedRequiredFields = requiredFields;
   let orderedOptionalFields = typeSpecificFields;
 
   if (order && order.length > 0) {
-    const allFields = [...requiredFields, ...typeSpecificFields];
-    const orderMap = new Map(order.map((id, idx) => [id, idx]));
+    const orderMap = new Map(order.map((fieldId, idx) => [fieldId, idx]));
 
     // Сортируем поля по сохранённому порядку, новые поля добавляем в конец
-    orderedRequiredFields = requiredFields
+    orderedRequiredFields = [...requiredFields]
       .sort((a, b) => (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity));
-    orderedOptionalFields = typeSpecificFields
+    orderedOptionalFields = [...typeSpecificFields]
       .sort((a, b) => (orderMap.get(a.id) ?? Infinity) - (orderMap.get(b.id) ?? Infinity));
   }
+
+  const hiddenFieldIdSet = new Set(hiddenFieldIds);
+  const displayedRequiredFields = orderedRequiredFields.filter((field) => !hiddenFieldIdSet.has(field.id));
+  const displayedOptionalFields = orderedOptionalFields.filter((field) => !hiddenFieldIdSet.has(field.id));
+  const hiddenFields = [...orderedRequiredFields, ...orderedOptionalFields].filter((field) => hiddenFieldIdSet.has(field.id));
 
   // Функция перемещения полей (drag-and-drop)
   const moveField = (dragIndex: number, hoverIndex: number, isOptional = false) => {
     if (!incident) return;
-    const fields = isOptional ? orderedOptionalFields : orderedRequiredFields;
-    if (dragIndex < 0 || dragIndex >= fields.length || hoverIndex < 0 || hoverIndex >= fields.length) return;
+    const visibleFields = isOptional ? displayedOptionalFields : displayedRequiredFields;
+    if (dragIndex < 0 || dragIndex >= visibleFields.length || hoverIndex < 0 || hoverIndex >= visibleFields.length) return;
 
-    const newFields = [...fields];
-    const [removed] = newFields.splice(dragIndex, 1);
-    newFields.splice(hoverIndex, 0, removed);
+    const reorderedVisibleFields = [...visibleFields];
+    [reorderedVisibleFields[dragIndex], reorderedVisibleFields[hoverIndex]] = [
+      reorderedVisibleFields[hoverIndex],
+      reorderedVisibleFields[dragIndex],
+    ];
 
-    // Сохраняем порядок всех полей
-    const allFieldIds = [...newFields.map(f => f.id)];
-    if (!isOptional) {
-      // Для базовых полей добавляем и дополнительные
-      allFieldIds.push(...orderedOptionalFields.map(f => f.id));
-    } else {
-      // Для дополнительных добавляем базовые в начале
-      allFieldIds.unshift(...orderedRequiredFields.map(f => f.id));
-    }
-    setFieldOrder(incident.типИнцидента, allFieldIds);
+    const hiddenRequiredFields = orderedRequiredFields.filter((field) => hiddenFieldIdSet.has(field.id));
+    const hiddenOptionalFields = orderedOptionalFields.filter((field) => hiddenFieldIdSet.has(field.id));
+
+    const nextRequiredOrder = isOptional ? orderedRequiredFields : [...reorderedVisibleFields, ...hiddenRequiredFields];
+    const nextOptionalOrder = isOptional ? [...reorderedVisibleFields, ...hiddenOptionalFields] : orderedOptionalFields;
+
+    setFieldOrder(
+      currentUserId,
+      incident.типИнцидента,
+      [...nextRequiredOrder.map((field) => field.id), ...nextOptionalOrder.map((field) => field.id)]
+    );
   };
-
-  // Отображаем все дополнительные поля, даже если они пустые
-  const displayedOptionalFields = orderedOptionalFields;
 
   if (!incident) {
     return (
@@ -910,8 +931,25 @@ export default function IncidentDetailPage() {
           </div>
         </div>
 
+        {hiddenFields.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 p-3">
+            <span className="text-xs font-medium text-gray-600 dark:text-gray-300">Скрытые поля:</span>
+            {hiddenFields.map((field) => (
+              <button
+                key={field.id}
+                onClick={() => showFieldForUser(currentUserId, incident.типИнцидента, field.id)}
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                title="Показать поле"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                {field.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {orderedRequiredFields.map((field, index) => (
+          {displayedRequiredFields.map((field, index) => (
             <DraggableField
               key={field.id}
               id={field.id}
@@ -920,7 +958,17 @@ export default function IncidentDetailPage() {
               icon={field.icon}
               iconBg={field.iconBg}
               index={index}
+              dragType="FIELD_REQUIRED"
               moveField={(dragIndex, hoverIndex) => moveField(dragIndex, hoverIndex, false)}
+              leftAction={
+                <button
+                  onClick={() => hideFieldForUser(currentUserId, incident.типИнцидента, field.id)}
+                  className="inline-flex items-center justify-center rounded-md p-1 text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                  title="Скрыть поле"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                </button>
+              }
               action={
                 <button
                   onClick={() => openFieldEditor(field.id, field.label)}
@@ -946,8 +994,18 @@ export default function IncidentDetailPage() {
                   value={field.getValue(incident)}
                   icon={field.icon}
                   iconBg={field.iconBg}
-                  index={orderedRequiredFields.length + index}
+                  index={index}
+                  dragType="FIELD_OPTIONAL"
                   moveField={(dragIndex, hoverIndex) => moveField(dragIndex, hoverIndex, true)}
+                  leftAction={
+                    <button
+                      onClick={() => hideFieldForUser(currentUserId, incident.типИнцидента, field.id)}
+                      className="inline-flex items-center justify-center rounded-md p-1 text-gray-500 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                      title="Скрыть поле"
+                    >
+                      <EyeOff className="w-3.5 h-3.5" />
+                    </button>
+                  }
                   action={
                     <button
                       onClick={() => openFieldEditor(field.id, field.label)}
