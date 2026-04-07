@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Plus, Trash2, ChevronDown, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useIncidentTypesStore } from '../../../store/incidentTypesStore.ts';
 import { useIncidentFieldsStore } from '../../../store/incidentFieldsStore.ts';
-import { useIncidentActionsStore } from '../../../store/incidentActionsStore.ts';
+import { UNIVERSAL_INCIDENT_ACTION_NAMES, useIncidentActionsStore } from '../../../store/incidentActionsStore.ts';
 
 const ITEMS_PER_PAGE = 10;
 
@@ -19,6 +19,7 @@ export default function IncidentTypeSettings() {
   const extraFields = useIncidentFieldsStore((state) => state.extraFields);
   const getExtraFieldById = useIncidentFieldsStore((state) => state.getExtraFieldById);
   const { actions, typeActions, addActionToType, removeActionFromType } = useIncidentActionsStore();
+  const universalActionNames = new Set<string>(UNIVERSAL_INCIDENT_ACTION_NAMES);
 
   // Собираем все доступные поля для выбора (базовые не показываем, только доп.)
   const getAvailableFieldsForType = () => {
@@ -114,7 +115,9 @@ export default function IncidentTypeSettings() {
       <div className="space-y-4">
         {paginatedTypes.map((type) => {
           const typeFieldIds = getTypeFieldIds(type.id);
-          const typeActionNames = typeActions[type.id] || [];
+          const typeActionNames = (typeActions[type.id] || []).filter(
+            (actionName) => !universalActionNames.has(actionName)
+          );
           const typeFields = typeFieldIds.map(id => getFieldById(id)).filter(Boolean);
           const isExpanded = expandedTypeId === type.id;
 
@@ -259,6 +262,7 @@ export default function IncidentTypeSettings() {
                       <div className="mt-2 max-h-40 overflow-y-auto bg-blue-100/50 dark:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-800">
                         {actions
                           .filter(a =>
+                            !universalActionNames.has(a.name) &&
                             a.name.toLowerCase().includes((actionSearch[type.id] || '').toLowerCase()) &&
                             !typeActionNames.includes(a.name)
                           )

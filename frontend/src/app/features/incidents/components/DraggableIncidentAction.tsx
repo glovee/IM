@@ -1,6 +1,7 @@
 import { useRef } from 'react';
+import type { ReactNode } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
-import { GripVertical, Mail, ShieldAlert, UserPlus, Workflow, CheckCircle, Archive, Send, X } from 'lucide-react';
+import { GripVertical, Mail, ShieldAlert, UserPlus, Workflow, CheckCircle, Archive, Send, Download, X } from 'lucide-react';
 import { IncidentAction } from '../../../store/incidentCollaboration.ts';
 
 interface DraggableIncidentActionProps {
@@ -9,6 +10,7 @@ interface DraggableIncidentActionProps {
   moveAction: (dragIndex: number, hoverIndex: number) => void;
   onRemove: (actionId: string) => void;
   readonly?: boolean;
+  customContent?: ReactNode;
 }
 
 const ACTION_TYPE = 'INCIDENT_ACTION';
@@ -22,6 +24,7 @@ const toneClasses: Record<IncidentAction['tone'], string> = {
 };
 
 function ActionIcon({ label }: { label: string }) {
+  if (label.toLowerCase().includes('выгруз')) return <Download className="w-3.5 h-3.5" />;
   if (label.toLowerCase().includes('статус')) return <CheckCircle className="w-3.5 h-3.5" />;
   if (label.toLowerCase().includes('пись')) return <Mail className="w-3.5 h-3.5" />;
   if (label.toLowerCase().includes('связаться')) return <Send className="w-3.5 h-3.5" />;
@@ -31,7 +34,7 @@ function ActionIcon({ label }: { label: string }) {
   return <Workflow className="w-3.5 h-3.5" />;
 }
 
-export default function DraggableIncidentAction({ action, index, moveAction, onRemove, readonly = false }: DraggableIncidentActionProps) {
+export default function DraggableIncidentAction({ action, index, moveAction, onRemove, readonly = false, customContent }: DraggableIncidentActionProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   const [{ isDragging }, drag, preview] = useDrag({
@@ -63,22 +66,28 @@ export default function DraggableIncidentAction({ action, index, moveAction, onR
           preview(node);
         }
       }}
-      className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${toneClasses[action.tone]} ${isDragging ? 'opacity-50' : ''}`}
+      className={`inline-flex items-center gap-2 ${isDragging ? 'opacity-50' : ''}`}
     >
       {!readonly && (
         <div ref={(node) => { if (node) drag(node); }} className="cursor-move">
-          <GripVertical className="w-3.5 h-3.5 opacity-60" />
+          <GripVertical className="w-3.5 h-3.5 opacity-60 text-gray-500 dark:text-gray-300" />
         </div>
       )}
-      <div className="flex h-5 w-5 items-center justify-center">
-        <ActionIcon label={action.label} />
-      </div>
-      <div className="font-medium whitespace-nowrap">{action.label}</div>
+      {customContent ? (
+        customContent
+      ) : (
+        <div className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${toneClasses[action.tone]}`}>
+          <div className="flex h-5 w-5 items-center justify-center">
+            <ActionIcon label={action.label} />
+          </div>
+          <div className="font-medium whitespace-nowrap">{action.label}</div>
+        </div>
+      )}
       {!readonly && (
         <button
           type="button"
           onClick={() => onRemove(action.id)}
-          className="opacity-80 hover:opacity-100"
+          className="opacity-80 hover:opacity-100 text-gray-600 dark:text-gray-300"
           title="Скрыть действие"
         >
           <X className="w-3.5 h-3.5" />

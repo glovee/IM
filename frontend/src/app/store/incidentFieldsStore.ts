@@ -56,12 +56,12 @@ export const DEFAULT_BASE_FIELDS: CustomField[] = [
   },
   {
     id: 'login',
-    name: 'Login',
+    name: 'Нарушитель',
     type: 'string',
     icon: 'Key',
     iconColor: '#f59e0b',
     required: true,
-    description: 'Учетная запись пользователя',
+    description: 'Учетная запись нарушителя',
   },
   {
     id: 'status',

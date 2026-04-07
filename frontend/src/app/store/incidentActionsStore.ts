@@ -3,6 +3,8 @@ import { persist } from 'zustand/middleware';
 import { IncidentTypeId } from '../types/incident.ts';
 import { CustomAction } from '../types/settings.ts';
 
+export const UNIVERSAL_INCIDENT_ACTION_NAMES = ['Выгрузка', 'Переместить в корзину'] as const;
+
 export const DEFAULT_INCIDENT_ACTIONS: CustomAction[] = [
   {
     id: 'assign-analyst',
@@ -58,7 +60,43 @@ export const DEFAULT_INCIDENT_ACTIONS: CustomAction[] = [
     targetType: 'custom',
     activities: [],
   },
+  {
+    id: 'move-to-trash',
+    name: 'Переместить в корзину',
+    description: 'Переместить инцидент в корзину',
+    icon: 'Trash2',
+    iconColor: '#ef4444',
+    targetType: 'custom',
+    activities: [],
+  },
+  {
+    id: 'export',
+    name: 'Выгрузка',
+    description: 'Выгрузка данных инцидента',
+    icon: 'Download',
+    iconColor: '#3b82f6',
+    targetType: 'custom',
+    activities: [],
+  },
 ];
+
+const UNIVERSAL_INCIDENT_ACTION_NAME_SET = new Set<string>(UNIVERSAL_INCIDENT_ACTION_NAMES);
+const DEFAULT_ACTIONS_BY_NAME = new Map(DEFAULT_INCIDENT_ACTIONS.map((action) => [action.name, action]));
+
+function ensureUniversalActions(actions: CustomAction[]): CustomAction[] {
+  const actionsByName = new Map(actions.map((action) => [action.name, action]));
+
+  UNIVERSAL_INCIDENT_ACTION_NAMES.forEach((actionName) => {
+    if (!actionsByName.has(actionName)) {
+      const fallback = DEFAULT_ACTIONS_BY_NAME.get(actionName);
+      if (fallback) {
+        actionsByName.set(actionName, fallback);
+      }
+    }
+  });
+
+  return Array.from(actionsByName.values());
+}
 
 // Действия по умолчанию для каждого типа инцидента
 export const DEFAULT_INCIDENT_TYPE_ACTIONS: Record<IncidentTypeId, string[]> = {
@@ -95,26 +133,32 @@ interface IncidentActionsState {
 export const useIncidentActionsStore = create<IncidentActionsState>()(
   persist(
     (set, get) => ({
-      actions: DEFAULT_INCIDENT_ACTIONS,
+      actions: ensureUniversalActions(DEFAULT_INCIDENT_ACTIONS),
       typeActions: DEFAULT_INCIDENT_TYPE_ACTIONS,
       
-      setActions: (actions) => set({ actions }),
+      setActions: (actions) => set({ actions: ensureUniversalActions(actions) }),
       
       addAction: (action) =>
         set((state) => ({
-          actions: [...state.actions, action],
+          actions: ensureUniversalActions([...state.actions, action]),
         })),
       
       removeAction: (actionId) =>
-        set((state) => ({
-          actions: state.actions.filter((a) => a.id !== actionId),
-        })),
+        set((state) => {
+          const actionToRemove = state.actions.find((action) => action.id === actionId);
+          if (actionToRemove && UNIVERSAL_INCIDENT_ACTION_NAME_SET.has(actionToRemove.name)) {
+            return state;
+          }
+          return {
+            actions: ensureUniversalActions(state.actions.filter((a) => a.id !== actionId)),
+          };
+        }),
       
       updateAction: (actionId, updates) =>
         set((state) => ({
-          actions: state.actions.map((a) =>
+          actions: ensureUniversalActions(state.actions.map((a) =>
             a.id === actionId ? { ...a, ...updates } : a
-          ),
+          )),
         })),
       
       setTypeActions: (typeId, actionNames) =>
@@ -143,24 +187,26 @@ export const useIncidentActionsStore = create<IncidentActionsState>()(
       
       getActions: () => {
         const { actions } = get();
-        return actions;
+        return ensureUniversalActions(actions);
       },
       
       getActionByName: (name) => {
-        const { actions } = get();
-        return actions.find((a) => a.name === name) ?? null;
+        const allActions = get().getActions();
+        return allActions.find((a) => a.name === name) ?? null;
       },
       
       getActionsForType: (typeId) => {
         const { typeActions } = get();
-        const actionNames = typeActions[typeId] ?? [];
+        const actionNames = Array.from(
+          new Set([...(typeActions[typeId] ?? []), ...UNIVERSAL_INCIDENT_ACTION_NAMES])
+        );
         const allActions = get().getActions();
         return allActions.filter((a) => actionNames.includes(a.name));
       },
       
       getActionByTargetType: (targetType) => {
-        const { actions } = get();
-        return actions.filter((a) => a.targetType === targetType);
+        const allActions = get().getActions();
+        return allActions.filter((a) => a.targetType === targetType);
       },
     }),
     {

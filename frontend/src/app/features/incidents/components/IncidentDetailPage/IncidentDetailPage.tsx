@@ -29,7 +29,6 @@ import {
   Flag,
   Clock,
   Server,
-  Download,
 } from 'lucide-react';
 import * as Icons from 'lucide-react';
 import { mockUser, mockUsersDirectory } from '../../../../data/mockData.ts';
@@ -49,6 +48,7 @@ import { Incident } from '../../../../types/incident.ts';
 import IncidentFieldEditDialog from './IncidentFieldEditDialog.tsx';
 
 const EMPTY_HIDDEN_FIELD_IDS: string[] = [];
+const EXPORT_ACTION_NAME = 'Выгрузка';
 
 // Helper: рендерит значение select-поля с цветами из store
 function renderSelectValue(value: string, selectOptions?: { label: string; borderColor: string; textColor: string; bgColor: string }[]): React.ReactNode {
@@ -538,7 +538,11 @@ export default function IncidentDetailPage() {
   const actions = incident ? (actionsByIncident[incident.id] ?? []) : [];
   const investigationEntries = incident ? (investigationByIncident[incident.id] ?? []) : [];
   const investigationThreads = useMemo(() => buildInvestigationThreads(investigationEntries), [investigationEntries]);
-  const availableActions = actionsStore.getActions().filter((action) => !actions.some((a) => a.label === action.name));
+  const availableActions = useMemo(() => {
+    if (!incident) return [];
+    const typeAssignedActions = actionsStore.getActionsForType(incident.типИнцидента);
+    return typeAssignedActions.filter((action) => !actions.some((a) => a.label === action.name));
+  }, [actions, actionsStore, incident]);
   const incidentType = incident ? getIncidentTypeDefinition(incident.типИнцидента) : undefined;
   const suggestedRecipient = incident ? (emailRecipient || resolveViolatorEmail(incident.login, incident.id)) : emailRecipient;
 
@@ -706,6 +710,13 @@ export default function IncidentDetailPage() {
           inputType = 'text';
           value = String(incident.дополнительныеПоля?.[fieldId] || incident[fieldId as keyof Incident] || '');
       }
+    }
+
+    // Для поля "Команда" всегда показываем актуальный список команд
+    if (fieldId === 'команда') {
+      inputType = 'select';
+      options = teamNames.map((teamName) => ({ label: teamName, value: teamName }));
+      value = String(incident.команда || '');
     }
 
     setEditingField({
@@ -887,9 +898,9 @@ export default function IncidentDetailPage() {
               index={index}
               moveAction={(dragIndex, hoverIndex) => moveAction(incident.id, dragIndex, hoverIndex)}
               onRemove={(actionId) => removeAction(incident.id, actionId)}
+              customContent={action.label === EXPORT_ACTION_NAME ? <ExportButtons incident={incident} /> : undefined}
             />
           ))}
-          <ExportButtons incident={incident} />
           <div className="relative">
             <button
               onClick={() => setShowActionPicker((prev) => !prev)}
@@ -914,7 +925,7 @@ export default function IncidentDetailPage() {
                   ))
                 ) : (
                   <div className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400">
-                    Все системные действия уже добавлены.
+                    Все действия для этого типа уже добавлены.
                   </div>
                 )}
               </div>

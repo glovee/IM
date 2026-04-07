@@ -19,6 +19,7 @@ import { useIncidentsStore } from '../../../../store/incidents.ts';
 const incidentStatusOptions = ['Открыт', 'В работе', 'Расследование', 'Закрыт', 'Ложный'];
 const EMPTY_HIDDEN_FIELD_IDS: string[] = [];
 const EMPTY_FIELD_ORDER: string[] = [];
+const EXPORT_ACTION_NAME = 'Выгрузка';
 
 interface IncidentRowProps {
   incident: Incident;
@@ -560,10 +561,10 @@ export default function IncidentRow({ incident, columns }: IncidentRowProps) {
                         index={index}
                         moveAction={() => {}}
                         onRemove={() => {}}
+                        customContent={action.label === EXPORT_ACTION_NAME ? <ExportButtons incident={incident} /> : undefined}
                         readonly
                       />
                     ))}
-                    <ExportButtons incident={incident} />
                   </div>
                   {actionsCollapsed && actions.length > 3 && (
                     <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">

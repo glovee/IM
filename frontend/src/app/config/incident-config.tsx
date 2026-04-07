@@ -30,7 +30,7 @@ export const DEFAULT_INCIDENT_COLUMNS: IncidentColumnDefinition[] = [
   { key: 'ответственный', label: 'Ответственный', width: 180, isDefault: true },
   { key: 'источник', label: 'Источник', width: 150, isDefault: true },
   { key: 'хост', label: 'Хост', width: 160, isDefault: true },
-  { key: 'login', label: 'Login', width: 180, isDefault: true },
+  { key: 'login', label: 'Нарушитель', width: 180, isDefault: true },
   { key: 'статус', label: 'Статус', width: 120, isDefault: true },
   { key: 'дата', label: 'Дата', width: 150, isDefault: true },
 ];

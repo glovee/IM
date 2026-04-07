@@ -259,7 +259,7 @@ export default function ActiveDirectorySettings() {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="text-sm text-gray-600 dark:text-gray-400">
-                Системные поля нарушителя, доступные для маппинга
+                Поля нарушителя, доступные для маппинга
               </div>
               <button
                 onClick={addMapping}
@@ -282,18 +282,14 @@ export default function ActiveDirectorySettings() {
                       <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
                         Поле в Active Directory
                       </label>
-                      <select
+                      <input
+                        type="text"
+                        list="ad-common-fields"
                         value={mapping.adFieldName}
                         onChange={(e) => updateMapping(index, 'adFieldName', e.target.value)}
+                        placeholder="Например: extensionAttribute1"
                         className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      >
-                        <option value="">Выберите поле AD...</option>
-                        {COMMON_AD_FIELDS.map((adField) => (
-                          <option key={adField.value} value={adField.value}>
-                            {adField.label}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     </div>
 
                     <div className="text-gray-400 dark:text-gray-500 pt-5">
@@ -329,9 +325,17 @@ export default function ActiveDirectorySettings() {
               )}
             </div>
 
+            <datalist id="ad-common-fields">
+              {COMMON_AD_FIELDS.map((adField) => (
+                <option key={adField.value} value={adField.value}>
+                  {adField.label}
+                </option>
+              ))}
+            </datalist>
+
             <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
               <div className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-                Системные поля нарушителя:
+                Поля нарушителя:
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-400">
                 {allViolatorFields.map((field) => (

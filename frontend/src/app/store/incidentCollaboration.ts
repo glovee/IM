@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { mockUser, mockUsersDirectory } from '../data/mockData.ts';
-import { getDefaultActionsForIncidentType, SYSTEM_INCIDENT_ACTIONS } from '../config/incident-actions.ts';
+import { getActionsForIncidentType, SYSTEM_INCIDENT_ACTIONS } from '../config/incident-actions.ts';
 import { IncidentTypeId } from '../types/incident.ts';
 
 export interface IncidentAction {
@@ -63,10 +63,14 @@ const initialActions: Record<string, IncidentAction[]> = {
     { id: 'a-1', label: 'Назначить на аналитика', tone: 'blue' },
     { id: 'a-2', label: 'Запросить артефакты', tone: 'amber' },
     { id: 'a-3', label: 'Эскалировать в SOC L2', tone: 'green' },
+    { id: 'a-1-universal-export', label: 'Выгрузка', tone: 'blue' },
+    { id: 'a-1-universal-trash', label: 'Переместить в корзину', tone: 'red' },
   ],
   '2': [
     { id: 'a-4', label: 'Сменить статус', tone: 'blue' },
     { id: 'a-5', label: 'Уведомить владельца системы', tone: 'green' },
+    { id: 'a-2-universal-export', label: 'Выгрузка', tone: 'blue' },
+    { id: 'a-2-universal-trash', label: 'Переместить в корзину', tone: 'red' },
   ],
 };
 
@@ -180,15 +184,39 @@ export const useIncidentCollaboration = create<IncidentCollaborationState>()((se
   ],
   initializeIncidentActions: (incidentId, incidentType) =>
     set((state) => {
-      if (state.actionsByIncident[incidentId]) {
-        return state;
+      const requiredActionNames = getActionsForIncidentType(incidentType).map((action) => action.name);
+      const allowedActionNameSet = new Set(requiredActionNames);
+      const existingActions = state.actionsByIncident[incidentId];
+      const buildDefaultActions = () =>
+        requiredActionNames.map((actionName, index) => ({
+          id: `default-${incidentId}-${index}`,
+          label: actionName,
+          tone: resolveActionTone(actionName, index),
+        }));
+
+      if (existingActions) {
+        const normalizedActions = existingActions.filter((action) => allowedActionNameSet.has(action.label));
+        const nextActions =
+          normalizedActions.length === 0 && existingActions.length > 0 && requiredActionNames.length > 0
+            ? buildDefaultActions()
+            : normalizedActions;
+        const shouldUpdate =
+          nextActions.length !== existingActions.length ||
+          nextActions.some((action, index) => action.id !== existingActions[index]?.id);
+
+        if (!shouldUpdate) {
+          return state;
+        }
+
+        return {
+          actionsByIncident: {
+            ...state.actionsByIncident,
+            [incidentId]: nextActions,
+          },
+        };
       }
 
-      const defaultActions = getDefaultActionsForIncidentType(incidentType).map((actionName, index) => ({
-        id: `default-${incidentId}-${index}`,
-        label: actionName,
-        tone: resolveActionTone(actionName, index),
-      }));
+      const defaultActions = buildDefaultActions();
 
       return {
         actionsByIncident: {
