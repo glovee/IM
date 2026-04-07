@@ -1,30 +1,72 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
   ArrowLeft,
+  Computer,
+  Database,
   Eraser,
+  Globe,
+  ImagePlus,
   Link2,
+  LogOut,
   MousePointer2,
   Paintbrush,
   Plus,
   Search,
+  Server,
   Share2,
+  ShieldAlert,
+  ShieldCheck,
   Trash2,
+  UserRound,
+  UserRoundPlus,
   Users,
   X,
 } from 'lucide-react';
-import { mockUser } from '../../../data/mockData.ts';
+import { mockUser, mockUsersDirectory } from '../../../data/mockData.ts';
 import { useIncidentsStore } from '../../../store/incidents.ts';
 import { useBoardsStore } from '../../../store/boardsStore.ts';
-import { BoardPoint, BoardToolMode } from '../../../types/board.ts';
-import { Incident } from '../../../types/incident.ts';
+import { useViolatorsStore } from '../../../store/violatorsStore.ts';
+import { BoardCanvasItem, BoardEntityKind, BoardIconKind, BoardPoint, BoardToolMode } from '../../../types/board.ts';
 import { useBoardsRealtimeSync } from '../hooks/useBoardsRealtimeSync.ts';
 
-interface DragNodeState {
-  nodeId: string;
+interface DragItemState {
+  itemId: string;
   offsetX: number;
   offsetY: number;
 }
+
+interface IconCatalogEntry {
+  key: BoardIconKind;
+  label: string;
+  color: string;
+  Icon: typeof UserRound;
+}
+
+const ICON_CATALOG: IconCatalogEntry[] = [
+  { key: 'person', label: 'Человек', color: '#2563eb', Icon: UserRound },
+  { key: 'computer', label: 'Компьютер', color: '#0f766e', Icon: Computer },
+  { key: 'server', label: 'Сервер', color: '#334155', Icon: Server },
+  { key: 'database', label: 'База данных', color: '#7c3aed', Icon: Database },
+  { key: 'network', label: 'Сеть', color: '#0891b2', Icon: Globe },
+  { key: 'threat', label: 'Угроза', color: '#dc2626', Icon: ShieldAlert },
+  { key: 'shield', label: 'Защита', color: '#16a34a', Icon: ShieldCheck },
+];
+
+const ENTITY_KIND_LABELS: Record<BoardEntityKind, string> = {
+  external_host: 'Внешний хост',
+  infrastructure: 'Инфраструктура',
+  event: 'Событие',
+  service: 'Сервис',
+  note: 'Заметка',
+};
+
+const FONT_OPTIONS = [
+  { value: 'Inter, sans-serif', label: 'Inter / Sans' },
+  { value: 'Georgia, serif', label: 'Georgia / Serif' },
+  { value: 'Trebuchet MS, sans-serif', label: 'Trebuchet' },
+  { value: 'Courier New, monospace', label: 'Courier New / Mono' },
+];
 
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString('ru-RU', {
@@ -49,6 +91,25 @@ function getStatusClassName(status: string) {
   }
 }
 
+function readImageAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Не удалось прочитать изображение.'));
+      }
+    };
+    reader.onerror = () => reject(new Error('Ошибка чтения файла.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function getIconEntry(icon: BoardIconKind) {
+  return ICON_CATALOG.find((entry) => entry.key === icon) ?? ICON_CATALOG[1];
+}
+
 export default function BoardDetailPage() {
   useBoardsRealtimeSync();
 
@@ -57,48 +118,70 @@ export default function BoardDetailPage() {
   const boardSurfaceRef = useRef<HTMLDivElement | null>(null);
 
   const boards = useBoardsStore((state) => state.boards);
+  const addBoardMember = useBoardsStore((state) => state.addBoardMember);
+  const removeBoardMember = useBoardsStore((state) => state.removeBoardMember);
+  const leaveBoard = useBoardsStore((state) => state.leaveBoard);
+  const deleteBoard = useBoardsStore((state) => state.deleteBoard);
   const addIncidentToBoard = useBoardsStore((state) => state.addIncidentToBoard);
-  const moveIncidentNode = useBoardsStore((state) => state.moveIncidentNode);
-  const removeIncidentFromBoard = useBoardsStore((state) => state.removeIncidentFromBoard);
-  const connectIncidentNodes = useBoardsStore((state) => state.connectIncidentNodes);
+  const addViolatorToBoard = useBoardsStore((state) => state.addViolatorToBoard);
+  const addEntityToBoard = useBoardsStore((state) => state.addEntityToBoard);
+  const addTextToBoard = useBoardsStore((state) => state.addTextToBoard);
+  const addImageToBoard = useBoardsStore((state) => state.addImageToBoard);
+  const addIconToBoard = useBoardsStore((state) => state.addIconToBoard);
+  const moveBoardItem = useBoardsStore((state) => state.moveBoardItem);
+  const removeBoardItem = useBoardsStore((state) => state.removeBoardItem);
+  const connectBoardItems = useBoardsStore((state) => state.connectBoardItems);
   const clearBoardDrawing = useBoardsStore((state) => state.clearBoardDrawing);
   const clearBoardConnections = useBoardsStore((state) => state.clearBoardConnections);
   const addStroke = useBoardsStore((state) => state.addStroke);
+
   const incidents = useIncidentsStore((state) => state.incidents);
+  const violators = useViolatorsStore((state) => state.violators);
 
   const board = useMemo(() => boards.find((entry) => entry.id === id), [boards, id]);
 
   const [mode, setMode] = useState<BoardToolMode>('select');
   const [incidentSearch, setIncidentSearch] = useState('');
+  const [violatorSearch, setViolatorSearch] = useState('');
   const [drawColor, setDrawColor] = useState('#2563eb');
   const [drawWidth, setDrawWidth] = useState(3);
   const [isDrawing, setIsDrawing] = useState(false);
   const [draftStroke, setDraftStroke] = useState<BoardPoint[]>([]);
-  const [dragNodeState, setDragNodeState] = useState<DragNodeState | null>(null);
-  const [selectedSourceNodeId, setSelectedSourceNodeId] = useState<string | null>(null);
+  const [dragItemState, setDragItemState] = useState<DragItemState | null>(null);
+  const [selectedSourceItemId, setSelectedSourceItemId] = useState<string | null>(null);
+  const [inviteUserId, setInviteUserId] = useState('');
+
+  const [entityKind, setEntityKind] = useState<BoardEntityKind>('external_host');
+  const [entityTitle, setEntityTitle] = useState('');
+  const [entityHost, setEntityHost] = useState('');
+  const [entityDescription, setEntityDescription] = useState('');
+
+  const [textContent, setTextContent] = useState('Комментарий аналитика');
+  const [textFontFamily, setTextFontFamily] = useState(FONT_OPTIONS[0].value);
+  const [textFontSize, setTextFontSize] = useState(18);
+  const [textFontWeight, setTextFontWeight] = useState<400 | 500 | 600 | 700>(500);
+  const [textColor, setTextColor] = useState('#111827');
+
+  const [imageUploadError, setImageUploadError] = useState('');
+
+  const [iconKind, setIconKind] = useState<BoardIconKind>('computer');
+  const [iconLabel, setIconLabel] = useState('Новый объект');
+  const [iconColor, setIconColor] = useState('#0f766e');
+
+  const incidentMap = useMemo(() => new Map(incidents.map((item) => [item.id, item])), [incidents]);
+  const violatorMap = useMemo(() => new Map(violators.map((item) => [item.id, item])), [violators]);
+
+  const isOwner = Boolean(board && board.ownerId === mockUser.id);
 
   useEffect(() => {
     if (mode !== 'connect') {
-      setSelectedSourceNodeId(null);
+      setSelectedSourceItemId(null);
     }
   }, [mode]);
 
-  const incidentMap = useMemo(() => {
-    return new Map(incidents.map((incident) => [incident.id, incident]));
-  }, [incidents]);
-
-  const nodeEntries = useMemo(() => {
-    if (!board) {
-      return [];
-    }
-    return board.incidentNodes
-      .map((node) => ({ node, incident: incidentMap.get(node.incidentId) }))
-      .filter((entry): entry is { node: typeof entry.node; incident: Incident } => Boolean(entry.incident));
-  }, [board, incidentMap]);
-
-  const nodesById = useMemo(() => {
-    return new Map((board?.incidentNodes ?? []).map((node) => [node.id, node]));
-  }, [board?.incidentNodes]);
+  const itemMap = useMemo(() => {
+    return new Map((board?.items ?? []).map((item) => [item.id, item]));
+  }, [board?.items]);
 
   const connectionLines = useMemo(() => {
     if (!board) {
@@ -107,25 +190,25 @@ export default function BoardDetailPage() {
 
     return board.connections
       .map((connection) => {
-        const fromNode = nodesById.get(connection.fromNodeId);
-        const toNode = nodesById.get(connection.toNodeId);
-        if (!fromNode || !toNode) {
+        const fromItem = itemMap.get(connection.fromItemId);
+        const toItem = itemMap.get(connection.toItemId);
+        if (!fromItem || !toItem) {
           return null;
         }
         return {
           id: connection.id,
-          x1: fromNode.x + fromNode.width / 2,
-          y1: fromNode.y + fromNode.height / 2,
-          x2: toNode.x + toNode.width / 2,
-          y2: toNode.y + toNode.height / 2,
+          x1: fromItem.x + fromItem.width / 2,
+          y1: fromItem.y + fromItem.height / 2,
+          x2: toItem.x + toItem.width / 2,
+          y2: toItem.y + toItem.height / 2,
         };
       })
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-  }, [board, nodesById]);
+  }, [board, itemMap]);
 
   const incidentIdsOnBoard = useMemo(() => {
-    return new Set((board?.incidentNodes ?? []).map((node) => node.incidentId));
-  }, [board?.incidentNodes]);
+    return new Set((board?.items ?? []).filter((item) => item.type === 'incident').map((item) => item.incidentId));
+  }, [board?.items]);
 
   const availableIncidents = useMemo(() => {
     if (!board) {
@@ -149,6 +232,45 @@ export default function BoardDetailPage() {
       .slice(0, 20);
   }, [board, incidentIdsOnBoard, incidentSearch, incidents]);
 
+  const violatorIdsOnBoard = useMemo(() => {
+    return new Set((board?.items ?? []).filter((item) => item.type === 'violator').map((item) => item.violatorId));
+  }, [board?.items]);
+
+  const availableViolators = useMemo(() => {
+    const query = violatorSearch.trim().toLowerCase();
+    return violators
+      .filter((violator) => !violatorIdsOnBoard.has(violator.id))
+      .filter((violator) => {
+        if (!query) {
+          return true;
+        }
+        return (
+          violator.name.toLowerCase().includes(query) ||
+          violator.samAccountName.toLowerCase().includes(query) ||
+          violator.email.toLowerCase().includes(query)
+        );
+      })
+      .slice(0, 20);
+  }, [violatorSearch, violators, violatorIdsOnBoard]);
+
+  const memberInviteCandidates = useMemo(() => {
+    if (!board) {
+      return [];
+    }
+    const memberIds = new Set(board.members.map((member) => member.id));
+    return mockUsersDirectory.filter((user) => !memberIds.has(user.id));
+  }, [board]);
+
+  useEffect(() => {
+    if (memberInviteCandidates.length === 0) {
+      setInviteUserId('');
+      return;
+    }
+    if (!memberInviteCandidates.some((user) => user.id === inviteUserId)) {
+      setInviteUserId(memberInviteCandidates[0].id);
+    }
+  }, [inviteUserId, memberInviteCandidates]);
+
   const getBoardPoint = (clientX: number, clientY: number): BoardPoint | null => {
     const surface = boardSurfaceRef.current;
     if (!surface) {
@@ -162,7 +284,7 @@ export default function BoardDetailPage() {
   };
 
   useEffect(() => {
-    if (!dragNodeState || !board || mode !== 'select') {
+    if (!dragItemState || !board || mode !== 'select') {
       return;
     }
 
@@ -171,12 +293,15 @@ export default function BoardDetailPage() {
       if (!point) {
         return;
       }
-      moveIncidentNode(board.id, dragNodeState.nodeId, point.x - dragNodeState.offsetX, point.y - dragNodeState.offsetY);
+      moveBoardItem(
+        board.id,
+        dragItemState.itemId,
+        point.x - dragItemState.offsetX,
+        point.y - dragItemState.offsetY
+      );
     };
 
-    const onUp = () => {
-      setDragNodeState(null);
-    };
+    const onUp = () => setDragItemState(null);
 
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -185,7 +310,7 @@ export default function BoardDetailPage() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [board, dragNodeState, mode, moveIncidentNode]);
+  }, [board, dragItemState, mode, moveBoardItem]);
 
   const palette = ['#1d4ed8', '#ef4444', '#f59e0b', '#10b981', '#0f172a', '#7c3aed'];
 
@@ -247,9 +372,9 @@ export default function BoardDetailPage() {
     setIsDrawing(false);
   };
 
-  const handleNodePointerDown = (
+  const handleItemPointerDown = (
     event: React.PointerEvent<HTMLDivElement>,
-    nodeId: string,
+    itemId: string,
     x: number,
     y: number
   ) => {
@@ -261,30 +386,229 @@ export default function BoardDetailPage() {
       return;
     }
     event.preventDefault();
-    setDragNodeState({
-      nodeId,
+    setDragItemState({
+      itemId,
       offsetX: point.x - x,
       offsetY: point.y - y,
     });
   };
 
-  const handleNodeClick = (nodeId: string) => {
+  const handleItemClick = (itemId: string) => {
     if (!board || mode !== 'connect') {
       return;
     }
 
-    if (!selectedSourceNodeId) {
-      setSelectedSourceNodeId(nodeId);
+    if (!selectedSourceItemId) {
+      setSelectedSourceItemId(itemId);
       return;
     }
 
-    if (selectedSourceNodeId === nodeId) {
-      setSelectedSourceNodeId(null);
+    if (selectedSourceItemId === itemId) {
+      setSelectedSourceItemId(null);
       return;
     }
 
-    connectIncidentNodes(board.id, selectedSourceNodeId, nodeId);
-    setSelectedSourceNodeId(null);
+    connectBoardItems(board.id, selectedSourceItemId, itemId);
+    setSelectedSourceItemId(null);
+  };
+
+  const handleAddEntity = () => {
+    if (!board || !entityTitle.trim()) {
+      return;
+    }
+
+    addEntityToBoard(board.id, {
+      kind: entityKind,
+      title: entityTitle,
+      host: entityHost,
+      description: entityDescription,
+    });
+
+    setEntityTitle('');
+    setEntityHost('');
+    setEntityDescription('');
+  };
+
+  const handleAddText = () => {
+    if (!board || !textContent.trim()) {
+      return;
+    }
+
+    addTextToBoard(board.id, {
+      text: textContent,
+      fontFamily: textFontFamily,
+      fontSize: textFontSize,
+      fontWeight: textFontWeight,
+      color: textColor,
+    });
+  };
+
+  const handleAddIcon = () => {
+    if (!board || !iconLabel.trim()) {
+      return;
+    }
+
+    addIconToBoard(board.id, {
+      icon: iconKind,
+      label: iconLabel,
+      color: iconColor,
+    });
+
+    setIconLabel('Новый объект');
+  };
+
+  const handleImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !board) {
+      return;
+    }
+
+    if (file.type !== 'image/png' && file.type !== 'image/jpeg') {
+      setImageUploadError('Разрешены только PNG и JPG/JPEG.');
+      return;
+    }
+
+    try {
+      const src = await readImageAsDataUrl(file);
+      addImageToBoard(board.id, {
+        src,
+        fileName: file.name,
+        mimeType: file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png',
+      });
+      setImageUploadError('');
+    } catch {
+      setImageUploadError('Не удалось загрузить изображение.');
+    }
+  };
+
+  const handleLeaveBoard = () => {
+    if (!board) {
+      return;
+    }
+    if (window.confirm('Выйти из этой доски?')) {
+      leaveBoard(board.id, mockUser.id);
+      navigate('/boards');
+    }
+  };
+
+  const handleDeleteBoard = () => {
+    if (!board) {
+      return;
+    }
+    if (window.confirm('Удалить доску целиком? Это действие нельзя отменить.')) {
+      deleteBoard(board.id);
+      navigate('/boards');
+    }
+  };
+
+  const renderItemContent = (item: BoardCanvasItem) => {
+    if (item.type === 'incident') {
+      const incident = incidentMap.get(item.incidentId);
+      if (!incident) {
+        return (
+          <div className="text-sm text-gray-500 dark:text-gray-400">Инцидент не найден.</div>
+        );
+      }
+      return (
+        <>
+          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            #{incident.id} {incident.название}
+          </div>
+          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{incident.login}</div>
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${getStatusClassName(incident.статус)}`}>
+              {incident.статус}
+            </span>
+            <span className="text-[11px] text-gray-500 dark:text-gray-400">{incident.команда}</span>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-xs">
+            <span className="text-gray-500 dark:text-gray-400">Ответственный: {incident.ответственный}</span>
+            <Link
+              to={`/incident/${incident.id}`}
+              onClick={(event) => event.stopPropagation()}
+              className="font-medium text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Открыть
+            </Link>
+          </div>
+        </>
+      );
+    }
+
+    if (item.type === 'violator') {
+      const violator = violatorMap.get(item.violatorId);
+      if (!violator) {
+        return <div className="text-sm text-gray-500 dark:text-gray-400">Нарушитель не найден.</div>;
+      }
+      return (
+        <>
+          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">{violator.name}</div>
+          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{violator.samAccountName}@{violator.domain}</div>
+          <div className="mt-2 text-xs text-gray-600 dark:text-gray-300">{violator.email}</div>
+          <div className="mt-2 text-right">
+            <Link
+              to={`/violator/${violator.id}`}
+              onClick={(event) => event.stopPropagation()}
+              className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Открыть карточку
+            </Link>
+          </div>
+        </>
+      );
+    }
+
+    if (item.type === 'entity') {
+      return (
+        <>
+          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">{item.title}</div>
+          <div className="mt-1 inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+            {ENTITY_KIND_LABELS[item.kind]}
+          </div>
+          {item.host && <div className="mt-2 text-xs text-gray-600 dark:text-gray-300">Хост: {item.host}</div>}
+          {item.description && (
+            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400" style={{ whiteSpace: 'pre-wrap' }}>
+              {item.description}
+            </div>
+          )}
+        </>
+      );
+    }
+
+    if (item.type === 'text') {
+      return (
+        <div
+          className="h-full w-full overflow-auto text-left"
+          style={{
+            fontFamily: item.fontFamily,
+            fontSize: item.fontSize,
+            fontWeight: item.fontWeight,
+            color: item.color,
+            whiteSpace: 'pre-wrap',
+            lineHeight: 1.35,
+          }}
+        >
+          {item.text}
+        </div>
+      );
+    }
+
+    if (item.type === 'image') {
+      return (
+        <div className="h-full w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900">
+          <img src={item.src} alt={item.fileName} className="h-full w-full object-cover" />
+        </div>
+      );
+    }
+
+    const icon = getIconEntry(item.icon);
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+        <icon.Icon className="h-10 w-10" style={{ color: item.color }} />
+        <div className="text-xs font-medium text-gray-700 dark:text-gray-200">{item.label}</div>
+      </div>
+    );
   };
 
   if (!board) {
@@ -324,19 +648,66 @@ export default function BoardDetailPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
-          <div className="flex items-center gap-2">
-            <Share2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-            Realtime включен (вкладки/окна)
+        <div className="flex flex-wrap items-center gap-2">
+          {!isOwner && (
+            <button
+              onClick={handleLeaveBoard}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-700 transition-colors hover:bg-amber-50 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-950/40"
+            >
+              <LogOut className="h-4 w-4" />
+              Выйти из доски
+            </button>
+          )}
+          {isOwner && (
+            <button
+              onClick={handleDeleteBoard}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 px-3 py-2 text-sm text-red-700 transition-colors hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-950/40"
+            >
+              <Trash2 className="h-4 w-4" />
+              Удалить доску
+            </button>
+          )}
+          <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+            <div className="flex items-center gap-2">
+              <Share2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              Realtime включен (вкладки/окна)
+            </div>
+            <div className="mt-1">Обновлено: {formatDateTime(board.updatedAt)}</div>
           </div>
-          <div className="mt-1">Обновлено: {formatDateTime(board.updatedAt)}</div>
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[320px_1fr]">
+      <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
         <aside className="space-y-4 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
           <div className="space-y-2">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Участники</h3>
+            {isOwner && memberInviteCandidates.length > 0 && (
+              <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2 dark:border-gray-700 dark:bg-gray-900">
+                <select
+                  value={inviteUserId}
+                  onChange={(event) => setInviteUserId(event.target.value)}
+                  className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-800 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                >
+                  {memberInviteCandidates.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => {
+                    if (inviteUserId) {
+                      addBoardMember(board.id, inviteUserId, 'editor');
+                    }
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700"
+                >
+                  <UserRoundPlus className="h-3.5 w-3.5" />
+                  Пригласить
+                </button>
+              </div>
+            )}
+
             <div className="space-y-2">
               {board.members.map((member) => (
                 <div key={member.id} className="flex items-center justify-between rounded-lg bg-gray-50 px-2 py-1.5 dark:bg-gray-900/70">
@@ -347,9 +718,20 @@ export default function BoardDetailPage() {
                       <div className="text-[11px] text-gray-500 dark:text-gray-400">{member.email}</div>
                     </div>
                   </div>
-                  <span className="rounded-md bg-gray-200 px-1.5 py-0.5 text-[11px] font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                    {member.role}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className="rounded-md bg-gray-200 px-1.5 py-0.5 text-[11px] font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                      {member.role}
+                    </span>
+                    {isOwner && member.role !== 'owner' && (
+                      <button
+                        onClick={() => removeBoardMember(board.id, member.id)}
+                        className="rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-red-500 dark:hover:bg-gray-700"
+                        title="Удалить пользователя из доски"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -366,40 +748,210 @@ export default function BoardDetailPage() {
                 className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-8 pr-3 text-sm text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
               />
             </div>
-
-            <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
-              {availableIncidents.length > 0 ? (
-                availableIncidents.map((incident) => (
-                  <div
-                    key={incident.id}
-                    className="rounded-lg border border-gray-200 p-3 dark:border-gray-700"
+            <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+              {availableIncidents.map((incident) => (
+                <div key={incident.id} className="rounded-lg border border-gray-200 p-2.5 dark:border-gray-700">
+                  <div className="text-xs font-medium text-gray-900 dark:text-gray-100">#{incident.id} {incident.название}</div>
+                  <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">{incident.login}</div>
+                  <button
+                    onClick={() => addIncidentToBoard(board.id, incident.id)}
+                    className="mt-2 inline-flex items-center gap-1 rounded-md bg-blue-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-blue-700"
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                          #{incident.id} {incident.название}
-                        </div>
-                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{incident.login}</div>
-                      </div>
-                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${getStatusClassName(incident.статус)}`}>
-                        {incident.статус}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => addIncidentToBoard(board.id, incident.id)}
-                      className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-blue-700"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Добавить
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <div className="rounded-lg border border-dashed border-gray-300 px-3 py-4 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                  Нет доступных инцидентов для добавления.
+                    <Plus className="h-3 w-3" />
+                    Добавить
+                  </button>
+                </div>
+              ))}
+              {availableIncidents.length === 0 && (
+                <div className="rounded-lg border border-dashed border-gray-300 px-3 py-3 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  Нет доступных инцидентов.
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Добавить нарушителя</h3>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-gray-400 dark:text-gray-500" />
+              <input
+                value={violatorSearch}
+                onChange={(event) => setViolatorSearch(event.target.value)}
+                placeholder="Поиск по имени или login"
+                className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-8 pr-3 text-sm text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+              />
+            </div>
+            <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+              {availableViolators.map((violator) => (
+                <div key={violator.id} className="rounded-lg border border-gray-200 p-2.5 dark:border-gray-700">
+                  <div className="text-xs font-medium text-gray-900 dark:text-gray-100">{violator.name}</div>
+                  <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">{violator.samAccountName}@{violator.domain}</div>
+                  <button
+                    onClick={() => addViolatorToBoard(board.id, violator.id)}
+                    className="mt-2 inline-flex items-center gap-1 rounded-md bg-blue-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-blue-700"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Добавить
+                  </button>
+                </div>
+              ))}
+              {availableViolators.length === 0 && (
+                <div className="rounded-lg border border-dashed border-gray-300 px-3 py-3 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  Нет доступных нарушителей.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Кастомный блок</h3>
+            <select
+              value={entityKind}
+              onChange={(event) => setEntityKind(event.target.value as BoardEntityKind)}
+              className="w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+            >
+              {(Object.keys(ENTITY_KIND_LABELS) as BoardEntityKind[]).map((kind) => (
+                <option key={kind} value={kind}>{ENTITY_KIND_LABELS[kind]}</option>
+              ))}
+            </select>
+            <input
+              value={entityTitle}
+              onChange={(event) => setEntityTitle(event.target.value)}
+              placeholder="Название блока"
+              className="w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+            />
+            <input
+              value={entityHost}
+              onChange={(event) => setEntityHost(event.target.value)}
+              placeholder="Хост/IP (опционально)"
+              className="w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+            />
+            <textarea
+              value={entityDescription}
+              onChange={(event) => setEntityDescription(event.target.value)}
+              rows={2}
+              placeholder="Описание"
+              className="w-full resize-none rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+            />
+            <button
+              onClick={handleAddEntity}
+              className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700"
+            >
+              <Plus className="h-3 w-3" />
+              Добавить блок
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Текст</h3>
+            <textarea
+              value={textContent}
+              onChange={(event) => setTextContent(event.target.value)}
+              rows={3}
+              className="w-full resize-none rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                value={textFontFamily}
+                onChange={(event) => setTextFontFamily(event.target.value)}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+              >
+                {FONT_OPTIONS.map((font) => (
+                  <option key={font.value} value={font.value}>{font.label}</option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min={12}
+                max={42}
+                value={textFontSize}
+                onChange={(event) => setTextFontSize(Math.max(12, Math.min(42, Number(event.target.value) || 18)))}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                value={String(textFontWeight)}
+                onChange={(event) => setTextFontWeight(Number(event.target.value) as 400 | 500 | 600 | 700)}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+              >
+                <option value="400">Regular</option>
+                <option value="500">Medium</option>
+                <option value="600">Semibold</option>
+                <option value="700">Bold</option>
+              </select>
+              <input
+                type="color"
+                value={textColor}
+                onChange={(event) => setTextColor(event.target.value)}
+                className="h-8 w-full rounded-lg border border-gray-300 bg-white px-1 py-1 dark:border-gray-600 dark:bg-gray-900"
+              />
+            </div>
+            <button
+              onClick={handleAddText}
+              className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700"
+            >
+              <Plus className="h-3 w-3" />
+              Добавить текст
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Изображение (PNG/JPG)</h3>
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-gray-300 px-2.5 py-1.5 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+              <ImagePlus className="h-3.5 w-3.5" />
+              Выбрать файл
+              <input
+                type="file"
+                accept="image/png,image/jpeg"
+                className="hidden"
+                onChange={handleImageUpload}
+              />
+            </label>
+            {imageUploadError && <div className="text-xs text-red-600 dark:text-red-400">{imageUploadError}</div>}
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Иконка из набора</h3>
+            <div className="grid grid-cols-2 gap-2">
+              {ICON_CATALOG.map((entry) => (
+                <button
+                  key={entry.key}
+                  onClick={() => {
+                    setIconKind(entry.key);
+                    setIconColor(entry.color);
+                    setIconLabel(entry.label);
+                  }}
+                  className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors ${
+                    iconKind === entry.key
+                      ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-900/30 dark:text-blue-300'
+                      : 'border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  <entry.Icon className="h-3.5 w-3.5" />
+                  {entry.label}
+                </button>
+              ))}
+            </div>
+            <input
+              value={iconLabel}
+              onChange={(event) => setIconLabel(event.target.value)}
+              placeholder="Подпись"
+              className="w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+            />
+            <input
+              type="color"
+              value={iconColor}
+              onChange={(event) => setIconColor(event.target.value)}
+              className="h-8 w-full rounded-lg border border-gray-300 bg-white px-1 py-1 dark:border-gray-600 dark:bg-gray-900"
+            />
+            <button
+              onClick={handleAddIcon}
+              className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700"
+            >
+              <Plus className="h-3 w-3" />
+              Добавить иконку
+            </button>
           </div>
         </aside>
 
@@ -481,8 +1033,7 @@ export default function BoardDetailPage() {
             ref={boardSurfaceRef}
             className="relative h-[calc(100vh-255px)] min-h-[640px] overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800"
             style={{
-              backgroundImage:
-                'radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.28) 1px, transparent 0)',
+              backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.28) 1px, transparent 0)',
               backgroundSize: '24px 24px',
             }}
           >
@@ -553,13 +1104,13 @@ export default function BoardDetailPage() {
               }}
             />
 
-            {nodeEntries.map(({ node, incident }) => {
-              const isSelectedSource = selectedSourceNodeId === node.id;
+            {board.items.map((item) => {
+              const isSelectedSource = selectedSourceItemId === item.id;
               return (
                 <div
-                  key={node.id}
-                  onPointerDown={(event) => handleNodePointerDown(event, node.id, node.x, node.y)}
-                  onClick={() => handleNodeClick(node.id)}
+                  key={item.id}
+                  onPointerDown={(event) => handleItemPointerDown(event, item.id, item.x, item.y)}
+                  onClick={() => handleItemClick(item.id)}
                   className={`absolute rounded-xl border bg-white p-3 shadow-md transition-shadow dark:bg-gray-900 ${
                     mode === 'select' ? 'cursor-grab active:cursor-grabbing' : ''
                   } ${mode === 'connect' ? 'cursor-pointer' : ''} ${
@@ -568,63 +1119,39 @@ export default function BoardDetailPage() {
                       : 'border-gray-200 dark:border-gray-700'
                   }`}
                   style={{
-                    left: node.x,
-                    top: node.y,
-                    width: node.width,
-                    minHeight: node.height,
+                    left: item.x,
+                    top: item.y,
+                    width: item.width,
+                    height: item.height,
                   }}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                        #{incident.id} {incident.название}
-                      </div>
-                      <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{incident.login}</div>
-                    </div>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        removeIncidentFromBoard(board.id, node.id);
-                      }}
-                      className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-red-500 dark:hover:bg-gray-800"
-                      title="Убрать с доски"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeBoardItem(board.id, item.id);
+                    }}
+                    className="absolute right-2 top-2 rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-red-500 dark:hover:bg-gray-800"
+                    title="Убрать с доски"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
 
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${getStatusClassName(incident.статус)}`}>
-                      {incident.статус}
-                    </span>
-                    <span className="text-[11px] text-gray-500 dark:text-gray-400">{incident.команда}</span>
-                  </div>
-
-                  <div className="mt-2 flex items-center justify-between text-xs">
-                    <span className="text-gray-500 dark:text-gray-400">Ответственный: {incident.ответственный}</span>
-                    <Link
-                      to={`/incident/${incident.id}`}
-                      onClick={(event) => event.stopPropagation()}
-                      className="font-medium text-blue-600 hover:underline dark:text-blue-400"
-                    >
-                      Открыть
-                    </Link>
-                  </div>
+                  {renderItemContent(item)}
                 </div>
               );
             })}
 
             {mode === 'connect' && (
               <div className="absolute left-3 top-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                {selectedSourceNodeId
-                  ? 'Выберите вторую карточку, чтобы создать связь.'
-                  : 'Нажмите первую карточку для начала построения связи.'}
+                {selectedSourceItemId
+                  ? 'Выберите второй блок, чтобы создать связь.'
+                  : 'Нажмите первый блок для начала построения связи.'}
               </div>
             )}
 
-            {board.incidentNodes.length === 0 && (
+            {board.items.length === 0 && (
               <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-xl border border-dashed border-gray-300 bg-white/90 px-8 py-6 text-center text-sm text-gray-600 dark:border-gray-600 dark:bg-gray-900/90 dark:text-gray-300">
-                Добавьте инциденты слева, чтобы начать построение схемы.
+                Добавьте блоки слева, чтобы начать построение схемы.
               </div>
             )}
           </div>
@@ -635,7 +1162,7 @@ export default function BoardDetailPage() {
                 <Users className="h-3.5 w-3.5" />
                 Участников: {board.members.length}
               </span>
-              <span>Карточек на доске: {board.incidentNodes.length}</span>
+              <span>Элементов: {board.items.length}</span>
               <span>Связей: {board.connections.length}</span>
               <span>Последнее изменение: {formatDateTime(board.updatedAt)}</span>
             </div>

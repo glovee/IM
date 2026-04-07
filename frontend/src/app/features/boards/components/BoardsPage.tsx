@@ -1,6 +1,16 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { ArrowRight, Clock3, PanelsTopLeft, Plus, Shield, UserRoundPlus, Users } from 'lucide-react';
+import {
+  ArrowRight,
+  Clock3,
+  LogOut,
+  PanelsTopLeft,
+  Plus,
+  Shield,
+  Trash2,
+  UserRoundPlus,
+  Users,
+} from 'lucide-react';
 import { mockUser, mockUsersDirectory } from '../../../data/mockData.ts';
 import { useTeamsStore } from '../../../store/teamsStore.ts';
 import { useBoardsStore } from '../../../store/boardsStore.ts';
@@ -21,17 +31,41 @@ interface BoardCardProps {
   board: Board;
   isOwner: boolean;
   onOpen: (boardId: string) => void;
+  onDelete: (boardId: string) => void;
+  onLeave: (boardId: string) => void;
 }
 
-function BoardCard({ board, isOwner, onOpen }: BoardCardProps) {
+function BoardCard({ board, isOwner, onOpen, onDelete, onLeave }: BoardCardProps) {
   return (
     <article className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm transition-colors hover:border-blue-300 dark:border-gray-700 dark:bg-gray-800 dark:hover:border-blue-700">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{board.title}</h3>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">{board.description || 'Без описания'}</p>
+        <div className="min-w-0 flex-1">
+          <h3
+            className="overflow-hidden text-base font-semibold text-gray-900 dark:text-gray-100"
+            style={{
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              wordBreak: 'break-word',
+            }}
+            title={board.title}
+          >
+            {board.title}
+          </h3>
+          <p
+            className="mt-1 overflow-hidden text-sm text-gray-600 dark:text-gray-300"
+            style={{
+              display: '-webkit-box',
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: 'vertical',
+              wordBreak: 'break-word',
+            }}
+            title={board.description || 'Без описания'}
+          >
+            {board.description || 'Без описания'}
+          </p>
         </div>
-        <span className="inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+        <span className="inline-flex shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
           {board.team}
         </span>
       </div>
@@ -39,7 +73,7 @@ function BoardCard({ board, isOwner, onOpen }: BoardCardProps) {
       <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-gray-500 dark:text-gray-400">
         <div className="flex items-center gap-2">
           <PanelsTopLeft className="h-4 w-4 text-gray-400 dark:text-gray-500" />
-          Узлов: <span className="font-medium text-gray-700 dark:text-gray-200">{board.incidentNodes.length}</span>
+          Элементов: <span className="font-medium text-gray-700 dark:text-gray-200">{board.items.length}</span>
         </div>
         <div className="flex items-center gap-2">
           <Shield className="h-4 w-4 text-gray-400 dark:text-gray-500" />
@@ -51,7 +85,7 @@ function BoardCard({ board, isOwner, onOpen }: BoardCardProps) {
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-between">
+      <div className="mt-4 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <div className="flex -space-x-2">
             {board.members.slice(0, 4).map((member) => (
@@ -78,11 +112,32 @@ function BoardCard({ board, isOwner, onOpen }: BoardCardProps) {
         </button>
       </div>
 
-      {!isOwner && (
-        <div className="mt-3 inline-flex rounded-md bg-emerald-100 px-2 py-1 text-[11px] font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-          Приглашение
+      <div className="mt-3 flex items-center justify-between gap-2">
+        {!isOwner && (
+          <div className="inline-flex rounded-md bg-emerald-100 px-2 py-1 text-[11px] font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+            Приглашение
+          </div>
+        )}
+        <div className="ml-auto">
+          {isOwner ? (
+            <button
+              onClick={() => onDelete(board.id)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 px-2.5 py-1.5 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-950/40"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Удалить
+            </button>
+          ) : (
+            <button
+              onClick={() => onLeave(board.id)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-50 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-950/40"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Выйти
+            </button>
+          )}
         </div>
-      )}
+      </div>
     </article>
   );
 }
@@ -93,6 +148,8 @@ export default function BoardsPage() {
   const navigate = useNavigate();
   const boards = useBoardsStore((state) => state.boards);
   const createBoard = useBoardsStore((state) => state.createBoard);
+  const deleteBoard = useBoardsStore((state) => state.deleteBoard);
+  const leaveBoard = useBoardsStore((state) => state.leaveBoard);
   const teams = useTeamsStore((state) => state.teams);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -107,10 +164,7 @@ export default function BoardsPage() {
     }
   }, [team, teams]);
 
-  const myBoards = useMemo(
-    () => boards.filter((board) => board.ownerId === mockUser.id),
-    [boards]
-  );
+  const myBoards = useMemo(() => boards.filter((board) => board.ownerId === mockUser.id), [boards]);
 
   const invitedBoards = useMemo(
     () =>
@@ -122,10 +176,7 @@ export default function BoardsPage() {
     [boards]
   );
 
-  const inviteCandidates = useMemo(
-    () => mockUsersDirectory.filter((user) => user.id !== mockUser.id),
-    []
-  );
+  const inviteCandidates = useMemo(() => mockUsersDirectory.filter((user) => user.id !== mockUser.id), []);
 
   const resetDialog = () => {
     setTitle('');
@@ -154,6 +205,18 @@ export default function BoardsPage() {
     });
     resetDialog();
     navigate(`/boards/${boardId}`);
+  };
+
+  const handleDeleteBoard = (boardId: string) => {
+    if (window.confirm('Удалить доску? Это действие нельзя отменить.')) {
+      deleteBoard(boardId);
+    }
+  };
+
+  const handleLeaveBoard = (boardId: string) => {
+    if (window.confirm('Выйти из доски? Вы перестанете видеть ее в списке приглашений.')) {
+      leaveBoard(boardId, mockUser.id);
+    }
   };
 
   return (
@@ -187,7 +250,14 @@ export default function BoardsPage() {
         {myBoards.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {myBoards.map((board) => (
-              <BoardCard key={board.id} board={board} isOwner={true} onOpen={(boardId) => navigate(`/boards/${boardId}`)} />
+              <BoardCard
+                key={board.id}
+                board={board}
+                isOwner={true}
+                onOpen={(boardId) => navigate(`/boards/${boardId}`)}
+                onDelete={handleDeleteBoard}
+                onLeave={handleLeaveBoard}
+              />
             ))}
           </div>
         ) : (
@@ -209,7 +279,14 @@ export default function BoardsPage() {
         {invitedBoards.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {invitedBoards.map((board) => (
-              <BoardCard key={board.id} board={board} isOwner={false} onOpen={(boardId) => navigate(`/boards/${boardId}`)} />
+              <BoardCard
+                key={board.id}
+                board={board}
+                isOwner={false}
+                onOpen={(boardId) => navigate(`/boards/${boardId}`)}
+                onDelete={handleDeleteBoard}
+                onLeave={handleLeaveBoard}
+              />
             ))}
           </div>
         ) : (
