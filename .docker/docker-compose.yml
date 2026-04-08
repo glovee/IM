@@ -1,0 +1,84 @@
+name: IM_full_dev
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: im_postgres
+    environment:
+      POSTGRES_DB: incident_management
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../backend/migrations/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_initial_schema.sql
+      - ../backend/migrations/002_seed_data.sql:/docker-entrypoint-initdb.d/002_seed_data.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: im_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@company.ru
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ..
+      dockerfile: .docker/backend/Dockerfile.dev
+    container_name: im_backend
+    working_dir: /app
+    volumes:
+      - ../backend:/app:rw
+      - backend_node_modules:/app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=incident_management
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: .docker/frontend/Dockerfile.dev
+    container_name: im_frontend
+    working_dir: /app
+    volumes:
+      - ../frontend:/app:rw
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
+    depends_on:
+      - backend
+    command: sh -c "mkdir -p /app/node_modules && (find /app/node_modules -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true) && npm cache clean --force && npm install && npm run dev -- --host 0.0.0.0"
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+  backend_node_modules:
+  frontend_node_modules:

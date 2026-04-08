@@ -31,16 +31,16 @@ import {
   Server,
 } from 'lucide-react';
 import * as Icons from 'lucide-react';
-import { mockUser, mockUsersDirectory } from '../../../../data/mockData.ts';
 import { useTeamsStore } from '../../../../store/teamsStore.ts';
-import DraggableField from '../DraggableField.tsx';
-import ExportButtons from '../ExportButtons.tsx';
-import DraggableIncidentAction from '../DraggableIncidentAction.tsx';
-import { InvestigationAttachment, InvestigationEntry, useIncidentCollaboration } from '../../../../store/incidentCollaboration.ts';
+import { useIncidentCollaboration, initCollaborationWs } from '../../../../store/incidentCollaboration.ts';
 import { useIncidentTypesStore } from '../../../../store/incidentTypesStore.ts';
 import { useIncidentFieldsStore } from '../../../../store/incidentFieldsStore.ts';
 import { buildIncidentDetailSettingsKey, useIncidentDetailStore } from '../../../../store/incidentDetailStore.ts';
 import { useIncidentActionsStore } from '../../../../store/incidentActionsStore.ts';
+import DraggableField from '../DraggableField.tsx';
+import ExportButtons from '../ExportButtons.tsx';
+import DraggableIncidentAction from '../DraggableIncidentAction.tsx';
+import { InvestigationAttachment, InvestigationEntry } from '../../../../store/incidentCollaboration.ts';
 import { getIncidentTypeDefinition } from '../../../../config/incident-config.tsx';
 import { getFileIcon } from '../../utils/fileIcons.tsx';
 import { useIncidentsStore } from '../../../../store/incidents.ts';
@@ -430,7 +430,18 @@ export default function IncidentDetailPage() {
   const fieldOrdersByKey = useIncidentDetailStore((state) => state.fieldOrders);
   const actionsStore = useIncidentActionsStore();
   const teamNames = useTeamsStore((state) => state.getTeamNames)();
-  const currentUserId = mockUser.id;
+
+  // Текущий пользователь — первый из usersDirectory (пока нет auth)
+  const usersDirectory = useIncidentCollaboration((state) => state.usersDirectory);
+  const loadUsersDirectory = useIncidentCollaboration((state) => state.loadUsersDirectory);
+  const loadInvestigationForIncident = useIncidentCollaboration((state) => state.loadInvestigationForIncident);
+  const currentUserId = usersDirectory[0]?.id || 'anonymous';
+
+  // Инициализация collaboration при первом рендере
+  useEffect(() => {
+    initCollaborationWs();
+    loadUsersDirectory();
+  }, [loadUsersDirectory]);
 
   const incident = useMemo(() => {
     return incidents.find((inc) => inc.id === id);
@@ -483,7 +494,7 @@ export default function IncidentDetailPage() {
   const handleSendComment = () => {
     const value = commentText.trim();
     if (!incident || (!value && commentAttachments.length === 0)) return;
-    addComment(incident.id, value || 'Добавлены вложения к расследованию.', commentAttachments);
+    addComment(incident.id, value || 'Добавлены вложения к расследованию.', currentUserId, commentAttachments);
     setCommentText('');
     setCommentAttachments([]);
   };
@@ -504,6 +515,7 @@ export default function IncidentDetailPage() {
     const selectedTemplate = emailTemplates.find((template) => template.id === selectedTemplateId);
     sendSystemEmail(
       incident.id,
+      currentUserId,
       recipient,
       emailSubject.trim(),
       emailBody.trim(),
@@ -533,7 +545,8 @@ export default function IncidentDetailPage() {
   useEffect(() => {
     if (!incident) return;
     initializeIncidentActions(incident.id, incident.типИнцидента);
-  }, [incident, initializeIncidentActions]);
+    loadInvestigationForIncident(incident.id);
+  }, [incident, initializeIncidentActions, loadInvestigationForIncident]);
 
   const actions = incident ? (actionsByIncident[incident.id] ?? []) : [];
   const investigationEntries = incident ? (investigationByIncident[incident.id] ?? []) : [];
@@ -740,9 +753,9 @@ export default function IncidentDetailPage() {
     if (!value) return;
 
     if (entry.type === 'comment') {
-      addComment(incident.id, value, [], entry.id);
+      addComment(incident.id, value, currentUserId, [], entry.id);
     } else {
-      replyToEmailThread(incident.id, entry.id, value);
+      replyToEmailThread(incident.id, currentUserId, entry.id, value);
     }
 
     setReplyDrafts((prev) => ({ ...prev, [entry.id]: '' }));
@@ -1100,8 +1113,8 @@ export default function IncidentDetailPage() {
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
-                {mockUsersDirectory
-                  .filter((user) => user.id !== mockUser.id)
+                {usersDirectory
+                  .filter((user) => user.id !== currentUserId)
                   .map((user) => (
                     <button
                       key={user.id}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Download, FileArchive } from 'lucide-react';
 import { Incident } from '../../../types/incident.ts';
+import { exportApi } from '../../../api/client.ts';
 
 interface ExportButtonsProps {
   incident: Incident;
@@ -11,21 +12,15 @@ export default function ExportButtons({ incident }: ExportButtonsProps) {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const handleExportFiles = () => {
-    console.log('Выгрузка файлов для инцидента:', incident.id);
-    alert(`Выгружаются файлы инцидента: ${incident.название}`);
-    // Здесь будет логика выгрузки файлов
+    window.open(exportApi.incidentFiles(incident.id), '_blank');
   };
 
   const handleExportFilesAndCard = () => {
-    console.log('Выгрузка файлов и карточки для инцидента:', incident.id);
-    alert(`Выгружаются файлы и карточка инцидента: ${incident.название}`);
-    // Здесь будет логика выгрузки файлов и карточки
+    window.open(exportApi.incidentCard(incident.id), '_blank');
   };
 
   const handleExportByViolator = () => {
-    console.log('Выгрузка всех инцидентов по нарушителю:', incident.login);
-    alert(`Выгружаются все инциденты по нарушителю: ${incident.login}`);
-    // Здесь будет логика выгрузки всех инцидентов по нарушителю
+    window.open(exportApi.byViolator(incident.login), '_blank');
   };
 
   useEffect(() => {

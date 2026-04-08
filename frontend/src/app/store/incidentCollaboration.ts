@@ -1,7 +1,11 @@
 import { create } from 'zustand';
-import { mockUser, mockUsersDirectory } from '../data/mockData.ts';
-import { getActionsForIncidentType, SYSTEM_INCIDENT_ACTIONS } from '../config/incident-actions.ts';
 import { IncidentTypeId } from '../types/incident.ts';
+import { getActionsForIncidentType, SYSTEM_INCIDENT_ACTIONS } from '../config/incident-actions.ts';
+import { dictApi } from '../api/client.ts';
+
+// ============================================================
+// Types
+// ============================================================
 
 export interface IncidentAction {
   id: string;
@@ -43,181 +47,156 @@ export interface UserNotification {
   read: boolean;
 }
 
+// ============================================================
+// API helpers
+// ============================================================
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const WS_BASE = import.meta.env.VITE_WS_URL || 'ws://localhost:3000/ws';
+
+async function apiFetch<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+async function apiPost<T>(path: string, body: any): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+
+function getNowString() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function makeActionTone(index: number): IncidentAction['tone'] {
+  return (['blue', 'green', 'amber', 'red', 'slate'] as const)[index % 5];
+}
+
+function resolveActionTone(actionName: string, fallbackIndex: number): IncidentAction['tone'] {
+  const sourceAction = SYSTEM_INCIDENT_ACTIONS.find((a) => a.name === actionName);
+  if (sourceAction?.iconColor === 'green') return 'green';
+  if (sourceAction?.iconColor === 'orange') return 'amber';
+  if (sourceAction?.iconColor === 'red') return 'red';
+  if (sourceAction?.iconColor === 'blue') return 'blue';
+  return makeActionTone(fallbackIndex);
+}
+
+// ============================================================
+// Store
+// ============================================================
+
 interface IncidentCollaborationState {
   actionsByIncident: Record<string, IncidentAction[]>;
   investigationByIncident: Record<string, InvestigationEntry[]>;
   notifications: UserNotification[];
+  usersDirectory: { id: string; name: string; email: string }[];
+
+  // Init
+  loadUsersDirectory: () => Promise<void>;
+  loadInvestigationForIncident: (incidentId: string) => Promise<void>;
+
+  // Actions
   initializeIncidentActions: (incidentId: string, incidentType: IncidentTypeId) => void;
   moveAction: (incidentId: string, dragIndex: number, hoverIndex: number) => void;
   addAction: (incidentId: string, actionName: string) => void;
   removeAction: (incidentId: string, actionId: string) => void;
-  addComment: (incidentId: string, content: string, attachments?: InvestigationAttachment[], parentId?: string) => void;
-  sendSystemEmail: (incidentId: string, recipient: string, subject: string, content: string, templateName: string) => void;
-  replyToEmailThread: (incidentId: string, parentId: string, content: string) => void;
+
+  // Investigation
+  addComment: (incidentId: string, content: string, authorId: string, attachments?: InvestigationAttachment[], parentId?: string) => Promise<void>;
+  sendSystemEmail: (incidentId: string, authorId: string, recipient: string, subject: string, content: string, templateName: string) => Promise<void>;
+  replyToEmailThread: (incidentId: string, authorId: string, parentId: string, content: string) => Promise<void>;
+
+  // Notifications
   markNotificationRead: (notificationId: string) => void;
   markAllNotificationsRead: (userId: string) => void;
+
+  // WS handlers
+  _handleInvestigationEntry: (data: any) => void;
 }
 
-const initialActions: Record<string, IncidentAction[]> = {
-  '1': [
-    { id: 'a-1', label: 'Назначить на аналитика', tone: 'blue' },
-    { id: 'a-2', label: 'Запросить артефакты', tone: 'amber' },
-    { id: 'a-3', label: 'Эскалировать в SOC L2', tone: 'green' },
-    { id: 'a-1-universal-export', label: 'Выгрузка', tone: 'blue' },
-    { id: 'a-1-universal-trash', label: 'Переместить в корзину', tone: 'red' },
-  ],
-  '2': [
-    { id: 'a-4', label: 'Сменить статус', tone: 'blue' },
-    { id: 'a-5', label: 'Уведомить владельца системы', tone: 'green' },
-    { id: 'a-2-universal-export', label: 'Выгрузка', tone: 'blue' },
-    { id: 'a-2-universal-trash', label: 'Переместить в корзину', tone: 'red' },
-  ],
-};
+export const useIncidentCollaboration = create<IncidentCollaborationState>()((set, get) => ({
+  actionsByIncident: {},
+  investigationByIncident: {},
+  notifications: [],
+  usersDirectory: [],
 
-const initialInvestigation: Record<string, InvestigationEntry[]> = {
-  '1': [
-    {
-      id: 'm-1',
-      incidentId: '1',
-      type: 'comment',
-      authorId: 'u2',
-      authorName: 'Алексей Смирнов',
-      authorRole: 'Аналитик SOC',
-      content: 'Проверил сетевой всплеск. Нужна дополнительная выгрузка с пограничного узла. @Иван Петров, подключись к разбору.',
-      createdAt: '2026-03-31 09:20',
-      mentions: ['u1'],
-      attachments: [
-        { id: 'att-1', name: 'edge-traffic.csv', sizeLabel: '420 KB' },
-      ],
-    },
-    {
-      id: 'm-1-r1',
-      incidentId: '1',
-      type: 'comment',
-      parentId: 'm-1',
-      threadRootId: 'm-1',
-      authorId: 'u1',
-      authorName: 'Иван Петров',
-      authorRole: 'Текущий пользователь',
-      content: 'Подключился к разбору. Запрашиваю выгрузку по хосту и проверю смежные события.',
-      createdAt: '2026-03-31 09:28',
-    },
-    {
-      id: 'm-2',
-      incidentId: '1',
-      type: 'email_out',
-      authorId: 'system',
-      authorName: 'Система IM',
-      authorRole: 'Системное письмо',
-      content: 'Добрый день. Просим уточнить обстоятельства подключения и подтвердить, выполняли ли вы это действие.',
-      createdAt: '2026-03-31 09:35',
-      recipient: 'abuse@company.com',
-      subject: 'Уточнение по сетевой активности',
-      templateName: 'Запросить пояснение',
-      threadRootId: 'm-2',
-    },
-    {
-      id: 'm-3',
-      incidentId: '1',
-      type: 'email_in',
-      parentId: 'm-2',
-      threadRootId: 'm-2',
-      authorId: 'violator',
-      authorName: 'Подозреваемый пользователь',
-      authorRole: 'Внешний ответ',
-      content: 'Я не инициировал это соединение. Прошу уточнить временной интервал и узел.',
-      createdAt: '2026-03-31 09:42',
-      recipient: 'abuse@company.com',
-      subject: 'Re: Уточнение по сетевой активности',
-      templateName: 'Ответ нарушителя',
-    },
-  ],
-};
+  // ============================================================
+  // Load users from API
+  // ============================================================
 
-function getNowString() {
-  const date = new Date();
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const hh = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
-}
+  loadUsersDirectory: async () => {
+    try {
+      const users = await dictApi.users();
+      set({
+        usersDirectory: users.map((u: any) => ({
+          id: u.id,
+          name: u.display_name,
+          email: u.email || '',
+        })),
+      });
+    } catch (e) {
+      console.error('[Collaboration] loadUsersDirectory error:', e);
+    }
+  },
 
-function extractMentionedUserIds(content: string) {
-  return mockUsersDirectory
-    .filter((user) => user.id !== mockUser.id)
-    .filter((user) => content.includes(`@${user.name}`))
-    .map((user) => user.id);
-}
+  // ============================================================
+  // Load investigation entries from API
+  // ============================================================
 
-function makeActionTone(index: number): IncidentAction['tone'] {
-  return (['blue', 'green', 'amber', 'red', 'slate'] as IncidentAction['tone'][])[index % 5];
-}
+  loadInvestigationForIncident: async (incidentId) => {
+    try {
+      const entries = await apiFetch<any[]>(`/api/investigation/entries/${incidentId}`);
+      set((state) => ({
+        investigationByIncident: {
+          ...state.investigationByIncident,
+          [incidentId]: entries.map((e: any) => ({
+            id: e.id,
+            incidentId: e.incident_id || incidentId,
+            type: e.type,
+            parentId: e.parent_id,
+            threadRootId: e.thread_root_id,
+            authorId: e.author_id,
+            authorName: e.author_name,
+            authorRole: e.author_role || '',
+            content: e.content,
+            createdAt: e.created_at,
+            mentions: e.mentions || [],
+            recipient: e.recipient,
+            subject: e.subject,
+            templateName: e.template_name,
+            attachments: [],
+          })),
+        },
+      }));
+    } catch (e) {
+      console.error('[Collaboration] loadInvestigationForIncident error:', e);
+    }
+  },
 
-function resolveActionTone(actionName: string, fallbackIndex: number): IncidentAction['tone'] {
-  const sourceAction = SYSTEM_INCIDENT_ACTIONS.find((action) => action.name === actionName);
-  return sourceAction?.iconColor === 'green'
-    ? 'green'
-    : sourceAction?.iconColor === 'orange'
-      ? 'amber'
-      : sourceAction?.iconColor === 'red'
-        ? 'red'
-        : sourceAction?.iconColor === 'blue'
-          ? 'blue'
-          : makeActionTone(fallbackIndex);
-}
+  // ============================================================
+  // Actions (local — порядок действий UI-преференция)
+  // ============================================================
 
-export const useIncidentCollaboration = create<IncidentCollaborationState>()((set) => ({
-  actionsByIncident: initialActions,
-  investigationByIncident: initialInvestigation,
-  notifications: [
-    {
-      id: 'n-1',
-      userId: mockUser.id,
-      incidentId: '1',
-      createdAt: '2026-03-31 09:20',
-      title: 'Вас упомянули в расследовании',
-      description: 'Алексей Смирнов отметил вас в комментарии по инциденту #1.',
-      read: false,
-    },
-  ],
   initializeIncidentActions: (incidentId, incidentType) =>
     set((state) => {
-      const requiredActionNames = getActionsForIncidentType(incidentType).map((action) => action.name);
-      const allowedActionNameSet = new Set(requiredActionNames);
-      const existingActions = state.actionsByIncident[incidentId];
-      const buildDefaultActions = () =>
-        requiredActionNames.map((actionName, index) => ({
-          id: `default-${incidentId}-${index}`,
-          label: actionName,
-          tone: resolveActionTone(actionName, index),
-        }));
-
-      if (existingActions) {
-        const normalizedActions = existingActions.filter((action) => allowedActionNameSet.has(action.label));
-        const nextActions =
-          normalizedActions.length === 0 && existingActions.length > 0 && requiredActionNames.length > 0
-            ? buildDefaultActions()
-            : normalizedActions;
-        const shouldUpdate =
-          nextActions.length !== existingActions.length ||
-          nextActions.some((action, index) => action.id !== existingActions[index]?.id);
-
-        if (!shouldUpdate) {
-          return state;
-        }
-
-        return {
-          actionsByIncident: {
-            ...state.actionsByIncident,
-            [incidentId]: nextActions,
-          },
-        };
-      }
-
-      const defaultActions = buildDefaultActions();
-
+      if (state.actionsByIncident[incidentId]) return state;
+      const requiredActionNames = getActionsForIncidentType(incidentType).map((a) => a.name);
+      const defaultActions = requiredActionNames.map((name, i) => ({
+        id: `default-${incidentId}-${i}`,
+        label: name,
+        tone: resolveActionTone(name, i),
+      }));
       return {
         actionsByIncident: {
           ...state.actionsByIncident,
@@ -225,188 +204,265 @@ export const useIncidentCollaboration = create<IncidentCollaborationState>()((se
         },
       };
     }),
+
   moveAction: (incidentId, dragIndex, hoverIndex) =>
     set((state) => {
       const actions = state.actionsByIncident[incidentId] ?? [];
-      if (dragIndex === hoverIndex || !actions[dragIndex] || !actions[hoverIndex]) {
-        return state;
-      }
-      const nextActions = [...actions];
-      const temp = nextActions[dragIndex];
-      nextActions[dragIndex] = nextActions[hoverIndex];
-      nextActions[hoverIndex] = temp;
+      if (dragIndex === hoverIndex || !actions[dragIndex] || !actions[hoverIndex]) return state;
+      const next = [...actions];
+      const temp = next[dragIndex];
+      next[dragIndex] = next[hoverIndex];
+      next[hoverIndex] = temp;
       return {
         actionsByIncident: {
           ...state.actionsByIncident,
-          [incidentId]: nextActions,
+          [incidentId]: next,
         },
       };
     }),
+
   addAction: (incidentId, actionName) =>
     set((state) => {
       const actions = state.actionsByIncident[incidentId] ?? [];
-      if (actions.some((action) => action.label === actionName)) {
-        return state;
-      }
-      const nextAction: IncidentAction = {
-        id: `action-${Date.now()}`,
-        label: actionName,
-        tone: resolveActionTone(actionName, actions.length),
-      };
+      if (actions.some((a) => a.label === actionName)) return state;
       return {
         actionsByIncident: {
           ...state.actionsByIncident,
-          [incidentId]: [...actions, nextAction],
+          [incidentId]: [...actions, {
+            id: `action-${Date.now()}`,
+            label: actionName,
+            tone: resolveActionTone(actionName, actions.length),
+          }],
         },
       };
     }),
+
   removeAction: (incidentId, actionId) =>
     set((state) => ({
       actionsByIncident: {
         ...state.actionsByIncident,
-        [incidentId]: (state.actionsByIncident[incidentId] ?? []).filter((action) => action.id !== actionId),
+        [incidentId]: (state.actionsByIncident[incidentId] ?? []).filter((a) => a.id !== actionId),
       },
     })),
-  addComment: (incidentId, content, attachments = [], parentId) =>
-    set((state) => {
-      const entries = state.investigationByIncident[incidentId] ?? [];
-      const mentionedUserIds = extractMentionedUserIds(content);
-      const parentEntry = parentId ? entries.find((entry) => entry.id === parentId) : undefined;
-      const nextId = `comment-${Date.now()}`;
-      const nextEntry: InvestigationEntry = {
-        id: nextId,
-        incidentId,
-        type: 'comment',
-        parentId,
-        threadRootId: parentEntry?.threadRootId ?? parentEntry?.id ?? nextId,
-        authorId: mockUser.id,
-        authorName: mockUser.name,
-        authorRole: 'Текущий пользователь',
-        content,
-        createdAt: getNowString(),
-        mentions: mentionedUserIds,
-        attachments,
-      };
 
-      const mentionNotifications: UserNotification[] = mentionedUserIds.map((userId) => {
-        return {
-          id: `notification-${Date.now()}-${userId}`,
-          userId,
-          incidentId,
-          createdAt: getNowString(),
-          title: 'Новое упоминание',
-          description: `${mockUser.name} отметил${userId === 'u3' ? 'а' : ''} вас в расследовании инцидента #${incidentId}.`,
-          read: false,
-        };
+  // ============================================================
+  // Investigation — API calls
+  // ============================================================
+
+  addComment: async (incidentId, content, authorId, attachments = [], parentId) => {
+    try {
+      const { usersDirectory } = get();
+      const mentionedUserIds = usersDirectory
+        .filter((u) => u.id !== authorId)
+        .filter((u) => content.includes(`@${u.name}`))
+        .map((u) => u.id);
+
+      const entry = await apiPost<any>('/api/investigation/entries', {
+        incident_id: incidentId,
+        type: 'comment',
+        author_id: authorId,
+        content,
+        parent_id: parentId || null,
+        thread_root_id: null, // сервер определит
       });
 
-      return {
-        investigationByIncident: {
-          ...state.investigationByIncident,
-          [incidentId]: [...entries, nextEntry],
-        },
-        notifications: [...state.notifications, ...mentionNotifications],
-      };
-    }),
-  sendSystemEmail: (incidentId, recipient, subject, content, templateName) => {
-    const rootId = `email-out-${Date.now()}`;
-    const outEntry: InvestigationEntry = {
-      id: rootId,
-      incidentId,
-      type: 'email_out',
-      threadRootId: rootId,
-      authorId: 'system',
-      authorName: 'Система IM',
-      authorRole: 'Системное письмо',
-      content,
-      createdAt: getNowString(),
-      recipient,
-      subject,
-      templateName,
-    };
-
-    set((state) => {
-      const entries = state.investigationByIncident[incidentId] ?? [];
-      return {
-        investigationByIncident: {
-          ...state.investigationByIncident,
-          [incidentId]: [...entries, outEntry],
-        },
-      };
-    });
-
-    setTimeout(() => {
+      // Локально добавим сразу для мгновенного UI
       set((state) => {
         const entries = state.investigationByIncident[incidentId] ?? [];
-        const replyEntry: InvestigationEntry = {
-          id: `email-in-${Date.now()}`,
+        const parentEntry = parentId ? entries.find((e) => e.id === parentId) : undefined;
+        const localEntry: InvestigationEntry = {
+          id: entry.id,
           incidentId,
-          type: 'email_in',
-          parentId: rootId,
-          threadRootId: rootId,
-          authorId: 'violator',
-          authorName: 'Нарушитель',
-          authorRole: 'Ответ на письмо',
-          content: 'Получил письмо. Подтверждаю получение и подготовлю пояснение по ситуации.',
-          createdAt: getNowString(),
-          recipient,
-          subject: `Re: ${subject}`,
-          templateName: 'Ответ нарушителя',
+          type: 'comment',
+          parentId: entry.parent_id,
+          threadRootId: entry.thread_root_id,
+          authorId,
+          authorName: usersDirectory.find((u) => u.id === authorId)?.name || 'Вы',
+          authorRole: '',
+          content,
+          createdAt: entry.created_at,
+          mentions: mentionedUserIds,
+          attachments,
         };
         return {
           investigationByIncident: {
             ...state.investigationByIncident,
-            [incidentId]: [...entries, replyEntry],
+            [incidentId]: [...entries, localEntry],
           },
         };
       });
-    }, 1500);
+    } catch (e) {
+      console.error('[Collaboration] addComment error:', e);
+    }
   },
-  replyToEmailThread: (incidentId, parentId, content) =>
-    set((state) => {
-      const entries = state.investigationByIncident[incidentId] ?? [];
-      const parentEntry = entries.find((entry) => entry.id === parentId);
-      if (!parentEntry) {
-        return state;
-      }
 
-      const nextEntry: InvestigationEntry = {
-        id: `email-reply-${Date.now()}`,
-        incidentId,
+  sendSystemEmail: async (incidentId, authorId, recipient, subject, content, templateName) => {
+    try {
+      const entry = await apiPost<any>('/api/investigation/entries', {
+        incident_id: incidentId,
         type: 'email_out',
-        parentId,
-        threadRootId: parentEntry.threadRootId ?? parentEntry.id,
-        authorId: 'system',
-        authorName: 'Система IM',
-        authorRole: 'Ответ системы',
+        author_id: authorId,
         content,
-        createdAt: getNowString(),
+        recipient,
+        subject,
+        template_name: templateName,
+      });
+
+      set((state) => {
+        const entries = state.investigationByIncident[incidentId] ?? [];
+        const localEntry: InvestigationEntry = {
+          id: entry.id,
+          incidentId,
+          type: 'email_out',
+          threadRootId: entry.thread_root_id,
+          authorId,
+          authorName: 'Система IM',
+          authorRole: 'Системное письмо',
+          content,
+          createdAt: entry.created_at,
+          recipient,
+          subject,
+          templateName,
+        };
+        return {
+          investigationByIncident: {
+            ...state.investigationByIncident,
+            [incidentId]: [...entries, localEntry],
+          },
+        };
+      });
+    } catch (e) {
+      console.error('[Collaboration] sendSystemEmail error:', e);
+    }
+  },
+
+  replyToEmailThread: async (incidentId, authorId, parentId, content) => {
+    try {
+      const entries = get().investigationByIncident[incidentId] ?? [];
+      const parentEntry = entries.find((e) => e.id === parentId);
+      if (!parentEntry) return;
+
+      const entry = await apiPost<any>('/api/investigation/entries', {
+        incident_id: incidentId,
+        type: 'email_out',
+        author_id: authorId,
+        content,
+        parent_id: parentId,
+        thread_root_id: parentEntry.threadRootId,
         recipient: parentEntry.recipient,
         subject: parentEntry.subject?.startsWith('Re:') ? parentEntry.subject : `Re: ${parentEntry.subject ?? 'Переписка по инциденту'}`,
-        templateName: 'Ответ в ветке',
-      };
+        template_name: 'Ответ в ветке',
+      });
 
+      set((state) => {
+        const allEntries = state.investigationByIncident[incidentId] ?? [];
+        const localEntry: InvestigationEntry = {
+          id: entry.id,
+          incidentId,
+          type: 'email_out',
+          parentId: entry.parent_id,
+          threadRootId: entry.thread_root_id,
+          authorId,
+          authorName: 'Система IM',
+          authorRole: 'Ответ системы',
+          content,
+          createdAt: entry.created_at,
+          recipient: parentEntry.recipient,
+          subject: entry.subject,
+          templateName: 'Ответ в ветке',
+        };
+        return {
+          investigationByIncident: {
+            ...state.investigationByIncident,
+            [incidentId]: [...allEntries, localEntry],
+          },
+        };
+      });
+    } catch (e) {
+      console.error('[Collaboration] replyToEmailThread error:', e);
+    }
+  },
+
+  // ============================================================
+  // Notifications (local пока — нет API для уведомлений)
+  // ============================================================
+
+  markNotificationRead: (notificationId) =>
+    set((state) => ({
+      notifications: state.notifications.map((n) =>
+        n.id === notificationId ? { ...n, read: true } : n
+      ),
+    })),
+
+  markAllNotificationsRead: (userId) =>
+    set((state) => ({
+      notifications: state.notifications.map((n) =>
+        n.userId === userId ? { ...n, read: true } : n
+      ),
+    })),
+
+  // ============================================================
+  // WS handler
+  // ============================================================
+
+  _handleInvestigationEntry: (data) => {
+    const incidentId = data.incident_id;
+    if (!incidentId) return;
+    const entry: InvestigationEntry = {
+      id: data.id,
+      incidentId,
+      type: data.type,
+      parentId: data.parent_id,
+      threadRootId: data.thread_root_id,
+      authorId: data.author_id,
+      authorName: data.author_name,
+      authorRole: data.author_role || '',
+      content: data.content,
+      createdAt: data.created_at,
+      mentions: [],
+      recipient: data.recipient,
+      subject: data.subject,
+      templateName: data.template_name,
+      attachments: [],
+    };
+    set((state) => {
+      const entries = state.investigationByIncident[incidentId] ?? [];
+      if (entries.find((e) => e.id === entry.id)) return state;
       return {
         investigationByIncident: {
           ...state.investigationByIncident,
-          [incidentId]: [...entries, nextEntry],
+          [incidentId]: [...entries, entry],
         },
       };
-    }),
-  markNotificationRead: (notificationId) =>
-    set((state) => ({
-      notifications: state.notifications.map((notification) =>
-        notification.id === notificationId
-          ? { ...notification, read: true }
-          : notification
-      ),
-    })),
-  markAllNotificationsRead: (userId) =>
-    set((state) => ({
-      notifications: state.notifications.map((notification) =>
-        notification.userId === userId
-          ? { ...notification, read: true }
-          : notification
-      ),
-    })),
+    });
+  },
 }));
+
+// ============================================================
+// WS subscription
+// ============================================================
+
+let wsInitialized = false;
+
+export function initCollaborationWs() {
+  if (wsInitialized) return;
+  wsInitialized = true;
+
+  const WS_URL_STR = import.meta.env.VITE_WS_URL || 'ws://localhost:3000/ws';
+  const ws = new WebSocket(WS_URL_STR);
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'investigation_entry_created') {
+        useIncidentCollaboration.getState()._handleInvestigationEntry(msg.data);
+      }
+    } catch (e) {
+      console.warn('[Collaboration WS] Parse error:', e);
+    }
+  };
+
+  ws.onclose = () => {
+    setTimeout(() => initCollaborationWs(), 5000);
+  };
+}
