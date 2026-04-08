@@ -15,9 +15,10 @@ import {
 
 let sourcesCache: { id: string; display_name: string }[] | null = null;
 let statusesCache: { id: string; display_name: string }[] | null = null;
+let teamsCache: { id: string; name: string }[] | null = null;
+let usersCache: { id: string; display_name: string }[] | null = null;
 
 async function resolveStatusId(nameOrId: string): Promise<string> {
-  // Если это уже UUID — возвращаем как есть
   if (nameOrId.includes('-')) return nameOrId;
   if (!statusesCache) {
     const statuses = await dictApi.statuses();
@@ -35,6 +36,34 @@ async function resolveSourceId(nameOrId: string): Promise<string> {
   }
   const found = sourcesCache.find((s) => s.display_name === nameOrId);
   return found?.id || nameOrId;
+}
+
+async function resolveTeamId(nameOrId: string): Promise<string> {
+  if (nameOrId.includes('-')) return nameOrId;
+  if (!teamsCache) {
+    const teams = await dictApi.teams();
+    teamsCache = teams.map((t: any) => ({ id: t.id, name: t.name }));
+  }
+  const found = teamsCache.find((t) => t.name === nameOrId);
+  return found?.id || nameOrId;
+}
+
+async function resolveUserId(nameOrId: string): Promise<string> {
+  if (nameOrId.includes('-')) return nameOrId;
+  if (!usersCache) {
+    const users = await dictApi.users();
+    usersCache = users.map((u: any) => ({ id: u.id, display_name: u.display_name }));
+  }
+  const found = usersCache.find((u) => u.display_name === nameOrId);
+  return found?.id || nameOrId;
+}
+
+function formatDateForApi(dateStr: string): string {
+  // "2026-03-26 10:30" → "2026-03-26T10:30:00Z"
+  if (!dateStr) return dateStr;
+  if (dateStr.includes('T')) return dateStr;
+  const [date, time] = dateStr.split(' ');
+  return time ? `${date}T${time}:00Z` : `${date}T00:00:00Z`;
 }
 
 interface IncidentsState {
@@ -116,6 +145,12 @@ export const useIncidentsStore = create<IncidentsState>()((set, get) => ({
           mapped.status_id = await resolveStatusId(value as string);
         } else if (engKey === 'source_id') {
           mapped.source_id = await resolveSourceId(value as string);
+        } else if (engKey === 'team_id') {
+          mapped.team_id = await resolveTeamId(value as string);
+        } else if (engKey === 'assignee_id') {
+          mapped.assignee_id = await resolveUserId(value as string);
+        } else if (engKey === 'date') {
+          mapped.date = formatDateForApi(value as string);
         } else if (engKey) {
           mapped[engKey] = value;
         }

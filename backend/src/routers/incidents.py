@@ -253,10 +253,14 @@ async def create_incident(data: IncidentCreate, db: AsyncSession = Depends(get_d
             IncidentType.name.label("type_name"),
             IncidentType.code.label("type_code"),
             IncidentSource.display_name.label("source_name"),
+            User.display_name.label("assignee_name"),
+            Team.name.label("team_name"),
         )
         .outerjoin(IncidentStatus, Incident.status_id == IncidentStatus.id)
         .outerjoin(IncidentType, Incident.incident_type_id == IncidentType.id)
         .outerjoin(IncidentSource, Incident.source_id == IncidentSource.id)
+        .outerjoin(User, Incident.assignee_id == User.id)
+        .outerjoin(Team, Incident.team_id == Team.id)
         .where(Incident.id == incident.id)
     )
     result = await db.execute(stmt)
@@ -285,6 +289,8 @@ async def create_incident(data: IncidentCreate, db: AsyncSession = Depends(get_d
         type_name=row.type_name,
         type_code=row.type_code,
         source_name=row.source_name,
+        assignee_name=row.assignee_name,
+        team_name=row.team_name,
     )
 
     # Broadcast через WebSocket
